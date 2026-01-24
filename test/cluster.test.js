@@ -14,46 +14,108 @@ describe("Cluster Integration", () => {
             });
 
             let output = "";
+            let workerCount = 0;
+            let resolved = false;
+
+            const cleanup = () => {
+                if (timeout) {
+                    clearTimeout(timeout);
+                }
+                try {
+                    child.stdout?.removeAllListeners();
+                    child.stderr?.removeAllListeners();
+                    child.removeAllListeners();
+                    child.kill("SIGKILL");
+                } catch (err) {
+                    /* ignore */
+                    console.debug(err);
+                }
+            };
+
+            const timeout = setTimeout(() => {
+                if (resolved) {
+                    return;
+                };
+                cleanup();
+                reject(new Error("Test timed out waiting for output. Output:\n" + output));
+            }, 10000).unref();
 
             child.stdout.on("data", (data) => {
                 const str = data.toString();
                 output += str;
 
-                // Check for expected output
-                if (output.includes("Shogun is the master!") &&
-                    output.includes("Worker") &&
-                    output.includes("is online")) {
+                // Count worker online occurrences
+                const matches = output.match(/Worker .*?\d+.*? is online/g);
+                if (matches) {
+                    workerCount = matches.length;
+                }
 
-                    // If we see workers online, we can assume success for this basic sanity check
-                    // Kill the child using SIGKILL to avoid the 10s graceful shutdown delay in the app
-                    child.kill("SIGKILL");
+                // Check for expected output
+                if (!resolved &&
+                    output.includes("Shogun is the master!") &&
+                    workerCount >= 2) {
+
+                    resolved = true;
+                    cleanup();
                     resolve();
                 }
             });
 
-            // child.stderr.on("data", (data) => {
-            //     console.error("STDERR:", data.toString());
-            // });
-
             child.on("close", (code) => {
-                // If the promise is already resolved, this does nothing
-                // If unexpected close, verify output match
+                if (resolved) {
+                    return;
+                };
+
+                // If closed unexpectedly
+                cleanup();
+                // We could check matches one last time here, but usually success happens in stdout
+                // If we got here without resolving, it's likely a failure or premature exit
                 try {
                     assert.match(output, /Shogun is the master!/);
-                    assert.match(output, /Worker .*?\d+.*? is online/);
-                    // If resolve wasn't called (e.g. timeout), resolve now if matches? 
-                    // But we want to kill explicitly.
+                    const matches = output.match(/Worker .*?\d+.*? is online/g);
+                    assert.ok(matches && matches.length >= 2, "Expected at least 2 workers online");
+                    resolved = true;
+                    resolve();
                 } catch (err) {
-                    // reject(err); // Don't reject here if we already resolved?
-                    console.error(err);
+                    reject(new Error(`Child exited early. code=${code}\n${err.message}\nOutput:\n${output}`));
                 }
             });
 
-            // Timeout safety
-            setTimeout(() => {
-                child.kill("SIGKILL");
-                reject(new Error("Test timed out waiting for output"));
-            }, 5000);
+            child.on("error", (err) => {
+                if (resolved) {
+                    return;
+                }
+                cleanup();
+                reject(err);
+            });
+        });
+
+    });
+});
+
+it("should throw error on invalid configuration", async (t) => {
+    const scriptPath = join(process.cwd(), "test", "fixtures", "invalid_app.js");
+
+    await new Promise((resolve, reject) => {
+        const child = spawn("node", [scriptPath], {
+            stdio: "pipe",
+            env: { ...process.env }
+        });
+
+        let stderr = "";
+
+        child.stderr.on("data", (data) => {
+            stderr += data.toString();
+        });
+
+        child.on("close", (code) => {
+            try {
+                assert.notEqual(code, 0, "Process should exit with error code");
+                assert.match(stderr, /Invalid configuration/);
+                resolve();
+            } catch (err) {
+                reject(err);
+            }
         });
     });
 });

@@ -1,13 +1,6 @@
 import { run } from "../../src/cluster.js";
 import http from "node:http";
-
-process.on("uncaughtException", (err) => {
-    if (err.code === "EPIPE") {
-        process.exit(0);
-    }
-    console.error(err);
-    process.exit(1);
-});
+import cluster from "node:cluster";
 
 run(() => {
     const server = http.createServer((req, res) => {
@@ -16,7 +9,10 @@ run(() => {
     });
 
     server.listen(0, () => {
-        // console.log("Worker listening");
+        setTimeout(() => {
+            cluster.worker.disconnect();
+            server.close();
+        }, 1500);
     });
 }, {
     minWorkers: 2,
