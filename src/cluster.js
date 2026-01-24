@@ -69,6 +69,14 @@ export function run(startWorker, options = true, log = console) {
         scaleDownGrace = 30000,
     } = typeof options === "object" ? options : {};
 
+    if (minWorkers > maxWorkers) {
+        throw new Error(`Invalid configuration: minWorkers (${minWorkers}) cannot be greater than maxWorkers (${maxWorkers})`);
+    }
+
+    if (scaleUpThreshold <= scaleDownThreshold) {
+        throw new Error(`Invalid configuration: scaleUpThreshold (${scaleUpThreshold}) must be greater than scaleDownThreshold (${scaleDownThreshold})`);
+    }
+
     const initialWorkers = mode === "max" ? maxWorkers : minWorkers;
     log.info(`Shogun is the master! Starting ${initialWorkers} workers (Max: ${maxWorkers}).`);
 
