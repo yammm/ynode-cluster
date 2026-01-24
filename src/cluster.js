@@ -67,6 +67,9 @@ export function run(startWorker, options = true, log = console) {
         mode = "smart", // 'smart' or 'max'
         scalingCooldown = 10000,
         scaleDownGrace = 30000,
+        autoScaleInterval = 5000,
+        shutdownSignals = ["SIGINT", "SIGTERM", "SIGQUIT"],
+        shutdownTimeout = 10000,
     } = typeof options === "object" ? options : {};
 
     if (minWorkers > maxWorkers) {
@@ -208,34 +211,30 @@ export function run(startWorker, options = true, log = console) {
 
                 return;
             }
-        }, 5000).unref();
+            return;
+        }, autoScaleInterval).unref();
     }
 
     // Graceful shutdown handling for Master
-    const signals = ["SIGINT", "SIGTERM", "SIGQUIT"];
-
-    signals.forEach((signal) => {
-        process.on(signal, () => {
-            log.info(`Master received ${signal}, shutting down workers...`);
-            isShuttingDown = true;
-            for (const worker of Object.values(cluster.workers)) {
-                if (worker && worker.isConnected()) {
-                    worker.send("shutdown");
+    if (Array.isArray(shutdownSignals) && shutdownSignals.length > 0) {
+        shutdownSignals.forEach((signal) => {
+            process.on(signal, () => {
+                log.info(`Master received ${signal}, shutting down workers...`);
+                isShuttingDown = true;
+                for (const worker of Object.values(cluster.workers)) {
+                    if (worker && worker.isConnected()) {
+                        worker.send("shutdown");
+                    }
                 }
-            }
 
-            // Allow some time for workers to clean up? 
-            // Ideally we wait for them to exit, but for now we just let the process exit eventually
-            // or rely on the fact that existing "shutdown" message logic in worker handles close.
-            // We can just exit the master after a timeout if we want to force it, 
-            // but usually letting workers exit will cause master to exit if all handles are closed.
-            // For safety in this template, we'll force exit after a timeout.
-            setTimeout(() => {
-                log.info("Master force exiting after timeout.");
-                process.exit(0);
-            }, 10000).unref();
+                // Allow some time for workers to clean up
+                if (shutdownTimeout > 0) {
+                    setTimeout(() => {
+                        log.warn(`Master force exiting after ${shutdownTimeout}s timeout.`);
+                        process.exit(0);
+                    }, shutdownTimeout * 1000).unref();
+                }
+            });
         });
-    });
+    }
 }
-
-

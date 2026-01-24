@@ -50,6 +50,24 @@ export interface ClusterOptions {
      * Default: 30000.
      */
     scaleDownGrace?: number;
+
+    /**
+     * Interval (ms) for auto-scaling checks in "smart" mode.
+     * Default: 5000.
+     */
+    autoScaleInterval?: number;
+
+    /**
+     * Signals to listen for to trigger graceful shutdown.
+     * Default: ["SIGINT", "SIGTERM", "SIGQUIT"].
+     */
+    shutdownSignals?: string[];
+
+    /**
+     * Time (ms) to wait for workers to shutdown before forced exit.
+     * Default: 10000.
+     */
+    shutdownTimeout?: number;
 }
 
 /**

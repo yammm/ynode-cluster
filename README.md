@@ -62,6 +62,9 @@ The `run(startWorker, options)` function accepts the following options:
 | `scaleDownThreshold` | `number` | `10` | Event loop lag (ms) threshold to trigger scaling down. |
 | `scalingCooldown` | `number` | `10000` | Minimum time (ms) between scaling actions. |
 | `scaleDownGrace` | `number` | `30000` | Grace period (ms) after scaling up before scaling down is allowed. |
+| `autoScaleInterval` | `number` | `5000` | Interval (ms) for auto-scaling checks in "smart" mode. |
+| `shutdownSignals` | `string[]` | `['SIGINT', 'SIGTERM', 'SIGQUIT']` | Signals to listen for to trigger graceful shutdown. |
+| `shutdownTimeout` | `number` | `10000` | Time (ms) to wait for workers to shutdown before forced exit. |
 
 ## Working with @ynode/autoshutdown
 
