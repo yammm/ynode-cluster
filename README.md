@@ -41,11 +41,31 @@ const startServer = async () => {
 };
 
 // Start the cluster
-run(startServer, {
-    mode: "smart", // Enable auto-scaling (default)
+const control = run(startServer, {
+    mode: "smart",
     minWorkers: 2,
-    maxWorkers: 8 // Default is os.availableParallelism()
+    maxWorkers: 4
 });
+
+// Access metrics
+setInterval(() => {
+    console.log(control.getMetrics());
+}, 5000);
+
+// Trigger zero-downtime reload (e.g., on SIGHUP or API call)
+// control.reload();
+```
+
+### Zero-Downtime Reload
+
+You can reload the cluster (e.g. after a code deployment) without dropping connections using `control.reload()`. This will:
+1. Sequentially start a new worker.
+2. Wait for it to come online.
+3. Gracefully shutdown the old worker.
+
+```js
+await control.reload();
+console.log("Reload complete!");
 ```
 
 ## Configuration

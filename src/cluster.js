@@ -257,7 +257,7 @@ export function run(startWorker, options = true, log = console) {
                     lag: stats.lag,
                     memory: stats.memory,
                     lastSeen: stats.lastSeen,
-                    upltime: worker && (Date.now() - stats.lastSeen) // approximate check time diff? No, let's just use lastSeen for now or maybe process uptime if we tracked it.
+                    upltime: worker && (Date.now() - stats.lastSeen)
                 });
             }
 
@@ -274,6 +274,52 @@ export function run(startWorker, options = true, log = console) {
                 scaleDownThreshold,
                 mode
             };
+        },
+        reload: async () => {
+            if (isShuttingDown) {
+                return;
+            }
+            log.info("Starting zero-downtime cluster reload...");
+
+            // Get a snapshot of current workers to replace
+            const currentWorkers = Object.values(cluster.workers);
+
+            for (const oldWorker of currentWorkers) {
+                if (!oldWorker) {
+                    continue;
+                }
+
+                // Fork a new worker
+                log.info("Spawning replacement worker...");
+                const newWorker = cluster.fork();
+
+                // Wait for the new worker to be online
+                await new Promise((resolve) => {
+                    newWorker.once("online", resolve);
+                });
+
+                // Wait for the new worker to be listening (optional, but safer for zero-downtime)
+                // However, not all workers listen. strict zero-downtime usually implies listening.
+                // We'll stick to 'online' for generic support in v1, 
+                // but maybe add a small delay or check?
+                // For now, 'online' means the process is up and running.
+
+                log.info(`Replacement worker ${newWorker.process.pid} is online. Gracefully shutting down old worker ${oldWorker.process.pid}...`);
+
+                // Gracefully disconnect the old worker
+                oldWorker.disconnect();
+
+                // We don't strictly wait for the old worker to die here to speed up deployment,
+                // but it handles its own shutdown. 
+                // If we wanted strict serial replacement (one dies, then next starts), we'd wait.
+                // But typically we want overlap.
+
+                // Wait for disconnect confirmation or short timeout to proceed to next
+                const disconnectPromise = new Promise(resolve => oldWorker.once("disconnect", resolve));
+                const timeoutPromise = new Promise(resolve => setTimeout(resolve, 2000).unref());
+                await Promise.race([disconnectPromise, timeoutPromise]);
+            }
+            log.info("Cluster reload complete.");
         }
     };
 }

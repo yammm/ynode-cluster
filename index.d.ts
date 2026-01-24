@@ -104,6 +104,7 @@ export interface ClusterManager {
      * Returns the current metrics of the cluster.
      */
     getMetrics: () => ClusterMetrics;
+    reload: () => Promise<void>;
 }
 
 /**
