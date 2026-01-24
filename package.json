@@ -6,6 +6,7 @@
     "exports": {
         ".": "./src/cluster.js"
     },
+    "types": "./index.d.ts",
     "type": "module",
     "license": "MIT",
     "author": "Michael Welter <me@mikinho.com>",
@@ -55,7 +56,7 @@
         "lint:fix": "eslint . --fix",
         "ver:preview": "npx autover --no-amend --dry-run --short",
         "ver:apply": "npx autover --guard-unchanged --short",
-        "test": "node --test",
+        "test": "node --test test/**/*.test.js",
         "prepublishOnly": "npm test || true",
         "postversion": "git push && git push --tags"
     },
