@@ -71,14 +71,51 @@ export interface ClusterOptions {
 }
 
 /**
+ * Metrics for a single worker.
+ */
+export interface WorkerMetrics {
+    id: string;
+    pid?: number;
+    lag: number;
+    memory?: any;
+    lastSeen: number;
+}
+
+/**
+ * aggregated metrics for the cluster.
+ */
+export interface ClusterMetrics {
+    workers: WorkerMetrics[];
+    totalLag: number;
+    avgLag: number;
+    workerCount: number;
+    maxWorkers: number;
+    minWorkers: number;
+    scaleUpThreshold: number;
+    scaleDownThreshold: number;
+    mode: string;
+}
+
+/**
+ * The cluster manager instance.
+ */
+export interface ClusterManager {
+    /**
+     * Returns the current metrics of the cluster.
+     */
+    getMetrics: () => ClusterMetrics;
+}
+
+/**
  * Manages the application's clustering.
  * 
  * @param startWorker - The function to execute when a worker process starts.
  * @param options - Configuration object or boolean to enable/disable.
  * @param log - Optional logger instance (defaults to console).
+ * @returns A ClusterManager instance if clustering is enabled and we are the master process, otherwise undefined (or the result of startWorker if it returns something, but typically void).
  */
 export function run(
     startWorker: () => void | Promise<void>,
     options?: ClusterOptions | boolean,
     log?: Console | any
-): void;
+): ClusterManager | void;

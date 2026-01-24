@@ -65,6 +65,21 @@ The `run(startWorker, options)` function accepts the following options:
 | `autoScaleInterval` | `number` | `5000` | Interval (ms) for auto-scaling checks in "smart" mode. |
 | `shutdownSignals` | `string[]` | `['SIGINT', 'SIGTERM', 'SIGQUIT']` | Signals to listen for to trigger graceful shutdown. |
 | `shutdownTimeout` | `number` | `10000` | Time (ms) to wait for workers to shutdown before forced exit. |
+ 
+## Accessing Metrics
+ 
+The `run()` function returns a `ClusterManager` instance (when in cluster mode) which exposes current metrics.
+ 
+```javascript
+const manager = run(startWorker, { mode: "smart" });
+ 
+// In your monitoring loop or API endpoint:
+if (manager) {
+    const metrics = manager.getMetrics();
+    console.log(`Current Lag: ${metrics.avgLag.toFixed(2)}ms`);
+    console.log(`Active Workers: ${metrics.workerCount}`);
+}
+```
 
 ## Working with @ynode/autoshutdown
 

@@ -50,7 +50,7 @@ import os from "node:os";
  * @param {object} log - The logger instance.
  */
 export function run(startWorker, options = true, log = console) {
-    const isEnabled = typeof options === "object" ? options.enabled : options;
+    const isEnabled = typeof options === "object" ? (options.enabled ?? true) : options;
 
     if (cluster.isWorker || !isEnabled) {
         log.info(`Running worker process.`);
@@ -230,11 +230,50 @@ export function run(startWorker, options = true, log = console) {
                 // Allow some time for workers to clean up
                 if (shutdownTimeout > 0) {
                     setTimeout(() => {
-                        log.warn(`Master force exiting after ${shutdownTimeout}s timeout.`);
+                        log.warn(`Master force exiting after ${shutdownTimeout / 1000}s timeout.`);
                         process.exit(0);
-                    }, shutdownTimeout * 1000).unref();
+                    }, shutdownTimeout).unref();
                 }
             });
         });
     }
+
+    // Expose metrics API
+    return {
+        getMetrics: () => {
+            const currentWorkers = Object.keys(cluster.workers).length;
+            let totalLag = 0;
+            let count = 0;
+            const workersData = [];
+
+            for (const [id, stats] of workerLoads.entries()) {
+                totalLag += stats.lag;
+                count++;
+
+                const worker = cluster.workers[id];
+                workersData.push({
+                    id,
+                    pid: worker?.process.pid,
+                    lag: stats.lag,
+                    memory: stats.memory,
+                    lastSeen: stats.lastSeen,
+                    upltime: worker && (Date.now() - stats.lastSeen) // approximate check time diff? No, let's just use lastSeen for now or maybe process uptime if we tracked it.
+                });
+            }
+
+            const avgLag = count > 0 ? (totalLag / count) : 0;
+
+            return {
+                workers: workersData,
+                totalLag,
+                avgLag,
+                workerCount: currentWorkers,
+                maxWorkers,
+                minWorkers,
+                scaleUpThreshold,
+                scaleDownThreshold,
+                mode
+            };
+        }
+    };
 }
