@@ -57,6 +57,8 @@ export function run(startWorker, options = true, log = console) {
         return startWorker();
     }
 
+    let isShuttingDown = false;
+
     const {
         minWorkers = Math.min(2, os.availableParallelism()),
         maxWorkers = os.availableParallelism(),
@@ -122,6 +124,10 @@ export function run(startWorker, options = true, log = console) {
 
         if (worker.exitedAfterDisconnect) {
             return log.info(`Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] disconnected voluntarily.`);
+        }
+
+        if (isShuttingDown) {
+            return log.info(`Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] died. Code: ${code}, Signal: ${signal}.`);
         }
 
         log.warn(`Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] died. Code: ${code}, Signal: ${signal}. Restarting...`);
@@ -194,7 +200,7 @@ export function run(startWorker, options = true, log = console) {
 
                 return;
             }
-        }, 5000);
+        }, 5000).unref();
     }
 
     // Graceful shutdown handling for Master
@@ -203,8 +209,9 @@ export function run(startWorker, options = true, log = console) {
     signals.forEach((signal) => {
         process.on(signal, () => {
             log.info(`Master received ${signal}, shutting down workers...`);
+            isShuttingDown = true;
             for (const worker of Object.values(cluster.workers)) {
-                if (worker) {
+                if (worker && worker.isConnected()) {
                     worker.send("shutdown");
                 }
             }
