@@ -85,6 +85,8 @@ The `run(startWorker, options)` function accepts the following options:
 | `autoScaleInterval` | `number` | `5000` | Interval (ms) for auto-scaling checks in "smart" mode. |
 | `shutdownSignals` | `string[]` | `['SIGINT', 'SIGTERM', 'SIGQUIT']` | Signals to listen for to trigger graceful shutdown. |
 | `shutdownTimeout` | `number` | `10000` | Time (ms) to wait for workers to shutdown before forced exit. |
+| `scaleUpMemory` | `number` | `0` | Threshold (MB) for average heap usage to trigger scaling up. |
+| `maxWorkerMemory` | `number` | `0` | Max heap usage (MB) for a worker before restart (Leak Protection). |
  
 ## Accessing Metrics
  

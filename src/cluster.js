@@ -54,6 +54,31 @@ export function run(startWorker, options = true, log = console) {
 
     if (cluster.isWorker || !isEnabled) {
         log.info(`Running worker process.`);
+
+        // Start heartbeat loop if enabled (and we are clustering)
+        if (cluster.isWorker && cluster.isConnected()) {
+            let lastCheck = Date.now();
+            setInterval(() => {
+                const now = Date.now();
+                // Approximate event loop lag
+                const lag = now - lastCheck - 2000;
+                lastCheck = now;
+
+                const memory = process.memoryUsage();
+
+                try {
+                    process.send({
+                        cmd: "heartbeat",
+                        lag: Math.max(0, lag),
+                        memory: memory.heapUsed // Use heapUsed for primary scaling/monitoring
+                    });
+                } catch (err) {
+                    // Ignore, channel probably closed
+                    log.debug("Failed to send heartbeat to master", err);
+                }
+            }, 2000).unref();
+        }
+
         return startWorker();
     }
 
@@ -70,6 +95,8 @@ export function run(startWorker, options = true, log = console) {
         autoScaleInterval = 5000,
         shutdownSignals = ["SIGINT", "SIGTERM", "SIGQUIT"],
         shutdownTimeout = 10000,
+        scaleUpMemory = 0, // MB (0 = disabled)
+        maxWorkerMemory = 0, // MB (0 = disabled)
     } = typeof options === "object" ? options : {};
 
     if (minWorkers > maxWorkers) {
@@ -120,6 +147,7 @@ export function run(startWorker, options = true, log = console) {
 
         worker.on("message", (msg) => {
             if (msg.cmd === "heartbeat") {
+                // console.log(`[Master] Heartbeat from ${worker.id}: ${msg.memory} bytes`);
                 workerLoads.set(worker.id, {
                     lag: msg.lag,
                     lastSeen: Date.now(),
@@ -179,10 +207,44 @@ export function run(startWorker, options = true, log = console) {
             }
 
             const avgLag = totalLag / count;
+            // Calculate Average Memory in MB
+            let totalMemory = 0; // Bytes
+            for (const stats of workerLoads.values()) {
+                if (stats.memory) {
+                    totalMemory += stats.memory;
+                }
+            }
+            const avgMemoryMB = count > 0 ? (totalMemory / count) / 1024 / 1024 : 0;
+
             const currentWorkers = Object.keys(cluster.workers).length;
 
-            if (avgLag > scaleUpThreshold && currentWorkers < maxWorkers) {
-                log.info(`High load detected (Avg Lag: ${avgLag.toFixed(2)}ms). Scaling up...`);
+            // Leak Protection (Max Worker Memory)
+            if (maxWorkerMemory > 0) {
+                for (const [id, stats] of workerLoads.entries()) {
+                    const memMB = stats.memory / 1024 / 1024;
+                    // console.log(`[Master] Checking Worker ${id} Memory: ${memMB.toFixed(2)}MB (Limit: ${maxWorkerMemory}MB)`);
+                    if (memMB > maxWorkerMemory) {
+                        log.warn(`Worker ${id} exceeded memory limit (${memMB.toFixed(2)}MB > ${maxWorkerMemory}MB). Restarting...`);
+                        const worker = cluster.workers[id];
+                        if (worker) {
+                            worker.kill();
+                        }
+                        // Exit handler will restart it
+                        return; // Wait for restart
+                    }
+                }
+            }
+
+            // Scale Up logic (Lag OR Memory)
+            const shouldScaleUpLag = avgLag > scaleUpThreshold;
+            const shouldScaleUpMem = scaleUpMemory > 0 && avgMemoryMB > scaleUpMemory;
+
+            if ((shouldScaleUpLag || shouldScaleUpMem) && currentWorkers < maxWorkers) {
+                const reason = shouldScaleUpMem
+                    ? `High Memory (Avg: ${avgMemoryMB.toFixed(2)}MB)`
+                    : `High Lag (Avg: ${avgLag.toFixed(2)}ms)`;
+
+                log.info(`${reason} detected. Scaling up...`);
                 try {
                     cluster.fork();
                 } catch (err) {

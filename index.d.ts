@@ -68,6 +68,18 @@ export interface ClusterOptions {
      * Default: 10000.
      */
     shutdownTimeout?: number;
+
+    /**
+     * Threshold (MB) for average heap usage to trigger scaling up.
+     * Default: 0 (disabled).
+     */
+    scaleUpMemory?: number;
+
+    /**
+     * Maximum heap usage (MB) for a single worker before it is restarted (Leak Protection).
+     * Default: 0 (disabled).
+     */
+    maxWorkerMemory?: number;
 }
 
 /**
