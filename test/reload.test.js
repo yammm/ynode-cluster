@@ -48,23 +48,13 @@ describe("Cluster Reload", () => {
                             // Ensure we have new PIDs
                             assert.ok(newPids.size > 0, "Should have started new workers");
 
-                            // Ensure intersection is empty (all replaced)
-                            // Note: newPids might include some old ones if logging happened before they died, 
-                            // but usually they are distinct sets in a clean reload.
-                            // Actually, let's just assert that *some* new PIDs exist that weren't in original.
-
-                            // const intersection = [...newPids].filter(x => originalPids.has(x));
-                            // assert.equal(intersection.length, 0, "All workers should be replaced"); 
-                            // This might be flaky if a worker logs "PID:" right as it's dying? 
-                            // The app logs PID on start typically.
-
                             // Let's simple check:
                             assert.notDeepEqual([...originalPids].sort(), [...newPids].sort());
 
-                            child.kill("SIGKILL");
+                            child.kill("SIGTERM");
                             resolve();
                         } catch (err) {
-                            child.kill("SIGKILL");
+                            child.kill("SIGTERM");
                             reject(err);
                         }
                     }
