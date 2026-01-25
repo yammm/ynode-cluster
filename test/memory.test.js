@@ -7,6 +7,9 @@ describe("Memory Scaling", () => {
     it("should restart worker on memory leak", async (t) => {
         const scriptPath = join(process.cwd(), "test", "fixtures", "memory_app.js");
 
+        // eslint-disable-next-line no-control-regex
+        const sanitize = new RegExp("\\x1b\\[\\d+m", "g");
+
         await new Promise((resolve, reject) => {
             const child = spawn("node", [scriptPath], {
                 stdio: ["pipe", "pipe", "pipe", "ipc"], // Enable IPC for messages if needed, though we rely on stdout
@@ -21,11 +24,13 @@ describe("Memory Scaling", () => {
             child.stdout.on("data", (data) => {
                 const str = data.toString();
                 output += str;
-                // console.log("STDOUT:", str);
+
+                // Remove escape sequences
+                const cleanStr = str.replace(sanitize, "");
 
                 // Need to find port to trigger leak. 
                 // The wrapper logs "connected to ... :port"
-                const match = str.match(/connected to .*?:(\d+)/);
+                const match = cleanStr.match(/connected to .*?:(\d+)/);
                 if (match && !port) {
                     port = parseInt(match[1]);
                     // Trigger leak
@@ -38,7 +43,7 @@ describe("Memory Scaling", () => {
                 }
 
                 // Track PIDs
-                const pidMatch = str.match(/Worker (\d+) is online/);
+                const pidMatch = cleanStr.match(/Worker (\d+) is online/);
                 if (pidMatch) {
                     const pid = pidMatch[1];
                     if (!initialPid) {
@@ -49,7 +54,7 @@ describe("Memory Scaling", () => {
                 }
 
                 // Detection log
-                if (str.includes("exceeded memory limit")) {
+                if (cleanStr.includes("exceeded memory limit")) {
                     // Success!
                 }
             });
