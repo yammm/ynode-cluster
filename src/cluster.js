@@ -56,7 +56,8 @@ export function run(startWorker, options = true, log = console) {
         log.info(`Running worker process.`);
 
         // Start heartbeat loop if enabled (and we are clustering)
-        if (cluster.isWorker && cluster.isConnected()) {
+        if (cluster.isWorker) {
+            ;
             let lastCheck = Date.now();
             setInterval(() => {
                 const now = Date.now();
