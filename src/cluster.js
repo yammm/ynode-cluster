@@ -292,6 +292,7 @@ export function run(startWorker, options = true, log = console) {
                 for (const worker of Object.values(cluster.workers)) {
                     if (worker && worker.isConnected()) {
                         worker.send("shutdown");
+                        worker.disconnect();
                     }
                 }
 
