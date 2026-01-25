@@ -98,6 +98,7 @@ export function run(startWorker, options = true, log = console) {
         shutdownTimeout = 10000,
         scaleUpMemory = 0, // MB (0 = disabled)
         maxWorkerMemory = 0, // MB (0 = disabled)
+        norestart = false,
     } = typeof options === "object" ? options : {};
 
     if (minWorkers > maxWorkers) {
@@ -168,6 +169,10 @@ export function run(startWorker, options = true, log = console) {
 
         if (isShuttingDown) {
             return log.info(`Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] died. Code: ${code}, Signal: ${signal}.`);
+        }
+
+        if (norestart) {
+            return log.warn(`Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] died. Code: ${code}, Signal: ${signal}. Not restarting (norestart enabled).`);
         }
 
         log.warn(`Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] died. Code: ${code}, Signal: ${signal}. Restarting...`);

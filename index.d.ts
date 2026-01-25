@@ -80,6 +80,12 @@ export interface ClusterOptions {
      * Default: 0 (disabled).
      */
     maxWorkerMemory?: number;
+
+    /**
+     * If true, workers will not be restarted when they die.
+     * Default: false.
+     */
+    norestart?: boolean;
 }
 
 /**
