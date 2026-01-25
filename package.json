@@ -1,6 +1,6 @@
 {
     "name": "@ynode/cluster",
-    "version": "1.2.2",
+    "version": "1.2.3",
     "description": "Smart, auto-scaling Node.js cluster manager that monitors event loop lag to optimize performance and resource usage.",
     "main": "src/cluster.js",
     "exports": {
