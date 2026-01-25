@@ -51,16 +51,23 @@ import os from "node:os";
  */
 export function run(startWorker, options = true, log = console) {
     const isEnabled = typeof options === "object" ? (options.enabled ?? true) : options;
+    let isShuttingDown = false;
 
     if (cluster.isWorker || !isEnabled) {
         log.info(`Running worker process.`);
 
         // Start heartbeat loop if enabled (and we are clustering)
         if (cluster.isWorker) {
-            ;
+            const worker = cluster.worker;
             let lastCheck = Date.now();
-            setInterval(() => {
+
+            const interval = setInterval(() => {
+                if (isShuttingDown || !worker.isConnected()) {
+                    return clearInterval(interval);
+                }
+
                 const now = Date.now();
+
                 // Approximate event loop lag
                 const lag = now - lastCheck - 2000;
                 lastCheck = now;
@@ -68,7 +75,7 @@ export function run(startWorker, options = true, log = console) {
                 const memory = process.memoryUsage();
 
                 try {
-                    process.send({
+                    worker.send({
                         cmd: "heartbeat",
                         lag: Math.max(0, lag),
                         memory: memory.heapUsed // Use heapUsed for primary scaling/monitoring
@@ -82,8 +89,6 @@ export function run(startWorker, options = true, log = console) {
 
         return startWorker();
     }
-
-    let isShuttingDown = false;
 
     const {
         minWorkers = Math.min(2, os.availableParallelism()),
