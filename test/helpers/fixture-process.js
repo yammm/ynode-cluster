@@ -77,3 +77,61 @@ export async function expectFixtureFailure(fixtureName, stderrPattern, { timeout
         });
     });
 }
+
+export async function runFixtureWithOutput(
+    fixtureName,
+    { timeoutMs = 10000, onStdout, onStderr } = {},
+) {
+    return new Promise((resolve, reject) => {
+        const child = spawnFixture(fixtureName);
+        let output = "";
+        let settled = false;
+
+        const finish = (fn) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            clearTimeout(timeout);
+            try {
+                child.stdout?.removeAllListeners();
+                child.stderr?.removeAllListeners();
+                child.removeAllListeners();
+            } catch (err) {
+                console.debug(err);
+            }
+            fn();
+        };
+
+        const timeout = setTimeout(() => {
+            finish(() => {
+                try {
+                    child.kill("SIGKILL");
+                } catch (err) {
+                    console.debug(err);
+                }
+                reject(new Error(`Timeout waiting for fixture ${fixtureName}. Output:\n${output}`));
+            });
+        }, timeoutMs).unref();
+
+        child.stdout.on("data", (data) => {
+            const str = data.toString();
+            output += str;
+            onStdout?.(str, child, output);
+        });
+
+        child.stderr.on("data", (data) => {
+            const str = data.toString();
+            output += str;
+            onStderr?.(str, child, output);
+        });
+
+        child.on("close", (code) => {
+            finish(() => resolve({ code, output }));
+        });
+
+        child.on("error", (err) => {
+            finish(() => reject(err));
+        });
+    });
+}
