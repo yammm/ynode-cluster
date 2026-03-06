@@ -134,23 +134,49 @@ export function run(startWorker, options = true, log = console) {
     }
 
     const workerLoads = new Map();
+    const workersWithErrorHandler = new WeakSet();
     let lastScalingAction = Date.now();
+
+    function attachWorkerErrorHandler(worker) {
+        if (!worker || workersWithErrorHandler.has(worker)) {
+            return;
+        }
+
+        worker.on("error", (err) => {
+            log.debug(`Worker IPC error (${worker.process.pid}):`, err);
+        });
+        workersWithErrorHandler.add(worker);
+    }
+
+    function sendToWorker(worker, payload) {
+        if (!worker || !worker.isConnected()) {
+            return;
+        }
+        if (typeof worker.isDead === "function" && worker.isDead()) {
+            return;
+        }
+
+        try {
+            worker.send(payload, (err) => {
+                if (err) {
+                    log.debug(`Failed to send IPC message to worker ${worker.process.pid}:`, err);
+                }
+            });
+        } catch (err) {
+            log.debug(`Failed to send IPC message to worker ${worker.process.pid}:`, err);
+        }
+    }
 
     function broadcastWorkerCount() {
         const count = Object.keys(cluster.workers).length;
         for (const worker of Object.values(cluster.workers)) {
-            if (worker && worker.isConnected()) {
-                try {
-                    worker.send({ cmd: "cluster-count", count });
-                } catch (err) {
-                    // Ignore channel closed errors
-                    log.debug(err);
-                }
-            }
+            attachWorkerErrorHandler(worker);
+            sendToWorker(worker, { cmd: "cluster-count", count });
         }
     }
 
     cluster.on("online", (worker) => {
+        attachWorkerErrorHandler(worker);
         log.info("Worker %o is online", worker.process.pid);
         broadcastWorkerCount();
 
@@ -312,7 +338,8 @@ export function run(startWorker, options = true, log = console) {
                 isShuttingDown = true;
                 for (const worker of Object.values(cluster.workers)) {
                     if (worker && worker.isConnected()) {
-                        worker.send("shutdown");
+                        attachWorkerErrorHandler(worker);
+                        sendToWorker(worker, "shutdown");
                         worker.disconnect();
                     }
                 }
