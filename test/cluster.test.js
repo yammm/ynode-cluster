@@ -93,6 +93,74 @@ describe("Cluster Integration", () => {
     });
 });
 
+it("should support null options by using default cluster settings", async () => {
+    const scriptPath = join(process.cwd(), "test", "fixtures", "null_options_app.js");
+
+    await new Promise((resolve, reject) => {
+        const child = spawn("node", [scriptPath], {
+            stdio: "pipe",
+            env: { ...process.env },
+        });
+
+        let output = "";
+        let resolved = false;
+
+        const cleanup = () => {
+            if (timeout) {
+                clearTimeout(timeout);
+            }
+            try {
+                child.stdout?.removeAllListeners();
+                child.stderr?.removeAllListeners();
+                child.removeAllListeners();
+                child.kill("SIGKILL");
+            } catch (err) {
+                /* ignore */
+                console.debug(err);
+            }
+        };
+
+        const timeout = setTimeout(() => {
+            if (resolved) {
+                return;
+            }
+            cleanup();
+            reject(new Error("Test timed out waiting for output. Output:\n" + output));
+        }, 10000).unref();
+
+        child.stdout.on("data", (data) => {
+            output += data.toString();
+
+            const hasMasterLog = output.includes("Shogun is the master!");
+            const workerOnlineMatches = output.match(/Worker .*?\d+.*? is online/g);
+            const hasWorkerOnline = workerOnlineMatches && workerOnlineMatches.length >= 1;
+
+            if (!resolved && hasMasterLog && hasWorkerOnline) {
+                resolved = true;
+                cleanup();
+                resolve();
+            }
+        });
+
+        child.on("close", (code) => {
+            if (resolved) {
+                return;
+            }
+
+            cleanup();
+            reject(new Error(`Child exited early. code=${code}\nOutput:\n${output}`));
+        });
+
+        child.on("error", (err) => {
+            if (resolved) {
+                return;
+            }
+            cleanup();
+            reject(err);
+        });
+    });
+});
+
 it("should throw error on invalid configuration", async (t) => {
     const scriptPath = join(process.cwd(), "test", "fixtures", "invalid_app.js");
 

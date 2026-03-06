@@ -39,13 +39,25 @@ import os from "node:os";
 const HEARTBEAT_INTERVAL_MS = 2000;
 const VALID_MODES = new Set(["smart", "max"]);
 
+function isOptionsObject(options) {
+    return options !== null && typeof options === "object" && !Array.isArray(options);
+}
+
 function resolveClusteringEnabled(options) {
-    return typeof options === "object" ? (options.enabled ?? true) : options;
+    if (isOptionsObject(options)) {
+        return options.enabled ?? true;
+    }
+
+    if (typeof options === "boolean") {
+        return options;
+    }
+
+    return true;
 }
 
 function buildClusterConfig(options) {
     const cpuCount = os.availableParallelism();
-    const rawOptions = typeof options === "object" ? options : {};
+    const rawOptions = isOptionsObject(options) ? options : {};
 
     return {
         minWorkers: Math.min(2, cpuCount),
