@@ -1,17 +1,11 @@
 import { describe, it } from "node:test";
-import { spawn } from "node:child_process";
 import { strict as assert } from "node:assert";
-import { join } from "node:path";
+import { expectFixtureFailure, spawnFixture } from "./helpers/fixture-process.js";
 
 describe("Cluster Integration", () => {
-    it("should start master and workers", async (t) => {
-        const scriptPath = join(process.cwd(), "test", "fixtures", "app.js");
-
+    it("should start master and workers", async () => {
         await new Promise((resolve, reject) => {
-            const child = spawn("node", [scriptPath], {
-                stdio: "pipe",
-                env: { ...process.env },
-            });
+            const child = spawnFixture("app.js");
 
             let output = "";
             let workerCount = 0;
@@ -44,13 +38,11 @@ describe("Cluster Integration", () => {
                 const str = data.toString();
                 output += str;
 
-                // Count worker online occurrences
                 const matches = output.match(/Worker .*?\d+.*? is online/g);
                 if (matches) {
                     workerCount = matches.length;
                 }
 
-                // Check for expected output
                 if (!resolved && output.includes("Shogun is the master!") && workerCount >= 2) {
                     resolved = true;
                     cleanup();
@@ -63,10 +55,7 @@ describe("Cluster Integration", () => {
                     return;
                 }
 
-                // If closed unexpectedly
                 cleanup();
-                // We could check matches one last time here, but usually success happens in stdout
-                // If we got here without resolving, it's likely a failure or premature exit
                 try {
                     assert.match(output, /Shogun is the master!/);
                     const matches = output.match(/Worker .*?\d+.*? is online/g);
@@ -94,13 +83,8 @@ describe("Cluster Integration", () => {
 });
 
 it("should support null options by using default cluster settings", async () => {
-    const scriptPath = join(process.cwd(), "test", "fixtures", "null_options_app.js");
-
     await new Promise((resolve, reject) => {
-        const child = spawn("node", [scriptPath], {
-            stdio: "pipe",
-            env: { ...process.env },
-        });
+        const child = spawnFixture("null_options_app.js");
 
         let output = "";
         let resolved = false;
@@ -162,13 +146,8 @@ it("should support null options by using default cluster settings", async () => 
 });
 
 it("should ignore malformed worker IPC messages", async () => {
-    const scriptPath = join(process.cwd(), "test", "fixtures", "malformed_message_app.js");
-
     await new Promise((resolve, reject) => {
-        const child = spawn("node", [scriptPath], {
-            stdio: "pipe",
-            env: { ...process.env },
-        });
+        const child = spawnFixture("malformed_message_app.js");
 
         let output = "";
         let settled = false;
@@ -233,439 +212,83 @@ it("should ignore malformed worker IPC messages", async () => {
     });
 });
 
-it("should throw error on invalid configuration", async (t) => {
-    const scriptPath = join(process.cwd(), "test", "fixtures", "invalid_app.js");
+const invalidConfigCases = [
+    {
+        name: "should throw error on invalid configuration",
+        fixture: "invalid_app.js",
+        pattern: /Invalid configuration/,
+    },
+    {
+        name: "should throw error on non-finite numeric configuration",
+        fixture: "invalid_numeric_config_app.js",
+        pattern: /Invalid configuration: minWorkers \(NaN\) must be a finite number/,
+    },
+    {
+        name: "should throw error on non-boolean enabled configuration",
+        fixture: "invalid_enabled_config_app.js",
+        pattern: /Invalid configuration: enabled \(false\) must be a boolean/,
+    },
+    {
+        name: "should throw error on non-boolean norestart configuration",
+        fixture: "invalid_norestart_config_app.js",
+        pattern: /Invalid configuration: norestart \(no\) must be a boolean/,
+    },
+    {
+        name: "should throw error on invalid shutdownSignals configuration",
+        fixture: "invalid_shutdown_signals_app.js",
+        pattern:
+            /Invalid configuration: shutdownSignals \(SIGTERM\) must be an array of non-empty strings/,
+    },
+    {
+        name: "should throw error when minWorkers is not an integer",
+        fixture: "invalid_min_workers_integer_app.js",
+        pattern: /Invalid configuration: minWorkers \(1.5\) must be an integer >= 1/,
+    },
+    {
+        name: "should throw error when maxWorkers is less than 1",
+        fixture: "invalid_max_workers_minimum_app.js",
+        pattern: /Invalid configuration: maxWorkers \(0\) must be an integer >= 1/,
+    },
+    {
+        name: "should throw error on negative scalingCooldown",
+        fixture: "invalid_negative_scaling_cooldown_app.js",
+        pattern: /Invalid configuration: scalingCooldown \(-1\) must be >= 0/,
+    },
+    {
+        name: "should throw error on negative scaleUpMemory",
+        fixture: "invalid_negative_scale_up_memory_app.js",
+        pattern: /Invalid configuration: scaleUpMemory \(-5\) must be >= 0/,
+    },
+    {
+        name: "should throw error on non-positive autoScaleInterval",
+        fixture: "invalid_zero_auto_scale_interval_app.js",
+        pattern: /Invalid configuration: autoScaleInterval \(0\) must be greater than 0/,
+    },
+    {
+        name: "should throw error on negative scaleDownThreshold",
+        fixture: "invalid_negative_scale_down_threshold_app.js",
+        pattern: /Invalid configuration: scaleDownThreshold \(-1\) must be >= 0/,
+    },
+    {
+        name: "should throw error on duplicate shutdownSignals",
+        fixture: "invalid_duplicate_shutdown_signals_app.js",
+        pattern:
+            /Invalid configuration: shutdownSignals \(SIGTERM,SIGTERM\) must not contain duplicates/,
+    },
+    {
+        name: "should throw error when startWorker is not a function",
+        fixture: "invalid_start_worker_app.js",
+        pattern: /Invalid configuration: startWorker \(string\) must be a function/,
+    },
+    {
+        name: "should throw error on invalid mode",
+        fixture: "invalid_mode_app.js",
+        pattern: /Invalid configuration: mode/,
+    },
+];
 
-    await new Promise((resolve, reject) => {
-        const child = spawn("node", [scriptPath], {
-            stdio: "pipe",
-            env: { ...process.env },
-        });
-
-        let stderr = "";
-
-        child.stderr.on("data", (data) => {
-            stderr += data.toString();
-        });
-
-        child.on("close", (code) => {
-            try {
-                assert.notEqual(code, 0, "Process should exit with error code");
-                assert.match(stderr, /Invalid configuration/);
-                resolve();
-            } catch (err) {
-                reject(err);
-            }
-        });
+for (const { name, fixture, pattern } of invalidConfigCases) {
+    it(name, async () => {
+        await expectFixtureFailure(fixture, pattern);
     });
-});
-
-it("should throw error on non-finite numeric configuration", async () => {
-    const scriptPath = join(process.cwd(), "test", "fixtures", "invalid_numeric_config_app.js");
-
-    await new Promise((resolve, reject) => {
-        const child = spawn("node", [scriptPath], {
-            stdio: "pipe",
-            env: { ...process.env },
-        });
-
-        let stderr = "";
-
-        child.stderr.on("data", (data) => {
-            stderr += data.toString();
-        });
-
-        child.on("close", (code) => {
-            try {
-                assert.notEqual(code, 0, "Process should exit with error code");
-                assert.match(
-                    stderr,
-                    /Invalid configuration: minWorkers \(NaN\) must be a finite number/,
-                );
-                resolve();
-            } catch (err) {
-                reject(err);
-            }
-        });
-    });
-});
-
-it("should throw error on non-boolean enabled configuration", async () => {
-    const scriptPath = join(process.cwd(), "test", "fixtures", "invalid_enabled_config_app.js");
-
-    await new Promise((resolve, reject) => {
-        const child = spawn("node", [scriptPath], {
-            stdio: "pipe",
-            env: { ...process.env },
-        });
-
-        let stderr = "";
-
-        child.stderr.on("data", (data) => {
-            stderr += data.toString();
-        });
-
-        child.on("close", (code) => {
-            try {
-                assert.notEqual(code, 0, "Process should exit with error code");
-                assert.match(stderr, /Invalid configuration: enabled \(false\) must be a boolean/);
-                resolve();
-            } catch (err) {
-                reject(err);
-            }
-        });
-    });
-});
-
-it("should throw error on non-boolean norestart configuration", async () => {
-    const scriptPath = join(process.cwd(), "test", "fixtures", "invalid_norestart_config_app.js");
-
-    await new Promise((resolve, reject) => {
-        const child = spawn("node", [scriptPath], {
-            stdio: "pipe",
-            env: { ...process.env },
-        });
-
-        let stderr = "";
-
-        child.stderr.on("data", (data) => {
-            stderr += data.toString();
-        });
-
-        child.on("close", (code) => {
-            try {
-                assert.notEqual(code, 0, "Process should exit with error code");
-                assert.match(stderr, /Invalid configuration: norestart \(no\) must be a boolean/);
-                resolve();
-            } catch (err) {
-                reject(err);
-            }
-        });
-    });
-});
-
-it("should throw error on invalid shutdownSignals configuration", async () => {
-    const scriptPath = join(process.cwd(), "test", "fixtures", "invalid_shutdown_signals_app.js");
-
-    await new Promise((resolve, reject) => {
-        const child = spawn("node", [scriptPath], {
-            stdio: "pipe",
-            env: { ...process.env },
-        });
-
-        let stderr = "";
-
-        child.stderr.on("data", (data) => {
-            stderr += data.toString();
-        });
-
-        child.on("close", (code) => {
-            try {
-                assert.notEqual(code, 0, "Process should exit with error code");
-                assert.match(
-                    stderr,
-                    /Invalid configuration: shutdownSignals \(SIGTERM\) must be an array of non-empty strings/,
-                );
-                resolve();
-            } catch (err) {
-                reject(err);
-            }
-        });
-    });
-});
-
-it("should throw error when minWorkers is not an integer", async () => {
-    const scriptPath = join(
-        process.cwd(),
-        "test",
-        "fixtures",
-        "invalid_min_workers_integer_app.js",
-    );
-
-    await new Promise((resolve, reject) => {
-        const child = spawn("node", [scriptPath], {
-            stdio: "pipe",
-            env: { ...process.env },
-        });
-
-        let stderr = "";
-
-        child.stderr.on("data", (data) => {
-            stderr += data.toString();
-        });
-
-        child.on("close", (code) => {
-            try {
-                assert.notEqual(code, 0, "Process should exit with error code");
-                assert.match(
-                    stderr,
-                    /Invalid configuration: minWorkers \(1.5\) must be an integer >= 1/,
-                );
-                resolve();
-            } catch (err) {
-                reject(err);
-            }
-        });
-    });
-});
-
-it("should throw error when maxWorkers is less than 1", async () => {
-    const scriptPath = join(
-        process.cwd(),
-        "test",
-        "fixtures",
-        "invalid_max_workers_minimum_app.js",
-    );
-
-    await new Promise((resolve, reject) => {
-        const child = spawn("node", [scriptPath], {
-            stdio: "pipe",
-            env: { ...process.env },
-        });
-
-        let stderr = "";
-
-        child.stderr.on("data", (data) => {
-            stderr += data.toString();
-        });
-
-        child.on("close", (code) => {
-            try {
-                assert.notEqual(code, 0, "Process should exit with error code");
-                assert.match(
-                    stderr,
-                    /Invalid configuration: maxWorkers \(0\) must be an integer >= 1/,
-                );
-                resolve();
-            } catch (err) {
-                reject(err);
-            }
-        });
-    });
-});
-
-it("should throw error on negative scalingCooldown", async () => {
-    const scriptPath = join(
-        process.cwd(),
-        "test",
-        "fixtures",
-        "invalid_negative_scaling_cooldown_app.js",
-    );
-
-    await new Promise((resolve, reject) => {
-        const child = spawn("node", [scriptPath], {
-            stdio: "pipe",
-            env: { ...process.env },
-        });
-
-        let stderr = "";
-
-        child.stderr.on("data", (data) => {
-            stderr += data.toString();
-        });
-
-        child.on("close", (code) => {
-            try {
-                assert.notEqual(code, 0, "Process should exit with error code");
-                assert.match(stderr, /Invalid configuration: scalingCooldown \(-1\) must be >= 0/);
-                resolve();
-            } catch (err) {
-                reject(err);
-            }
-        });
-    });
-});
-
-it("should throw error on negative scaleUpMemory", async () => {
-    const scriptPath = join(
-        process.cwd(),
-        "test",
-        "fixtures",
-        "invalid_negative_scale_up_memory_app.js",
-    );
-
-    await new Promise((resolve, reject) => {
-        const child = spawn("node", [scriptPath], {
-            stdio: "pipe",
-            env: { ...process.env },
-        });
-
-        let stderr = "";
-
-        child.stderr.on("data", (data) => {
-            stderr += data.toString();
-        });
-
-        child.on("close", (code) => {
-            try {
-                assert.notEqual(code, 0, "Process should exit with error code");
-                assert.match(stderr, /Invalid configuration: scaleUpMemory \(-5\) must be >= 0/);
-                resolve();
-            } catch (err) {
-                reject(err);
-            }
-        });
-    });
-});
-
-it("should throw error on non-positive autoScaleInterval", async () => {
-    const scriptPath = join(
-        process.cwd(),
-        "test",
-        "fixtures",
-        "invalid_zero_auto_scale_interval_app.js",
-    );
-
-    await new Promise((resolve, reject) => {
-        const child = spawn("node", [scriptPath], {
-            stdio: "pipe",
-            env: { ...process.env },
-        });
-
-        let stderr = "";
-
-        child.stderr.on("data", (data) => {
-            stderr += data.toString();
-        });
-
-        child.on("close", (code) => {
-            try {
-                assert.notEqual(code, 0, "Process should exit with error code");
-                assert.match(
-                    stderr,
-                    /Invalid configuration: autoScaleInterval \(0\) must be greater than 0/,
-                );
-                resolve();
-            } catch (err) {
-                reject(err);
-            }
-        });
-    });
-});
-
-it("should throw error on negative scaleDownThreshold", async () => {
-    const scriptPath = join(
-        process.cwd(),
-        "test",
-        "fixtures",
-        "invalid_negative_scale_down_threshold_app.js",
-    );
-
-    await new Promise((resolve, reject) => {
-        const child = spawn("node", [scriptPath], {
-            stdio: "pipe",
-            env: { ...process.env },
-        });
-
-        let stderr = "";
-
-        child.stderr.on("data", (data) => {
-            stderr += data.toString();
-        });
-
-        child.on("close", (code) => {
-            try {
-                assert.notEqual(code, 0, "Process should exit with error code");
-                assert.match(
-                    stderr,
-                    /Invalid configuration: scaleDownThreshold \(-1\) must be >= 0/,
-                );
-                resolve();
-            } catch (err) {
-                reject(err);
-            }
-        });
-    });
-});
-
-it("should throw error on duplicate shutdownSignals", async () => {
-    const scriptPath = join(
-        process.cwd(),
-        "test",
-        "fixtures",
-        "invalid_duplicate_shutdown_signals_app.js",
-    );
-
-    await new Promise((resolve, reject) => {
-        const child = spawn("node", [scriptPath], {
-            stdio: "pipe",
-            env: { ...process.env },
-        });
-
-        let stderr = "";
-
-        child.stderr.on("data", (data) => {
-            stderr += data.toString();
-        });
-
-        child.on("close", (code) => {
-            try {
-                assert.notEqual(code, 0, "Process should exit with error code");
-                assert.match(
-                    stderr,
-                    /Invalid configuration: shutdownSignals \(SIGTERM,SIGTERM\) must not contain duplicates/,
-                );
-                resolve();
-            } catch (err) {
-                reject(err);
-            }
-        });
-    });
-});
-
-it("should throw error when startWorker is not a function", async () => {
-    const scriptPath = join(process.cwd(), "test", "fixtures", "invalid_start_worker_app.js");
-
-    await new Promise((resolve, reject) => {
-        const child = spawn("node", [scriptPath], {
-            stdio: "pipe",
-            env: { ...process.env },
-        });
-
-        let stderr = "";
-
-        child.stderr.on("data", (data) => {
-            stderr += data.toString();
-        });
-
-        child.on("close", (code) => {
-            try {
-                assert.notEqual(code, 0, "Process should exit with error code");
-                assert.match(
-                    stderr,
-                    /Invalid configuration: startWorker \(string\) must be a function/,
-                );
-                resolve();
-            } catch (err) {
-                reject(err);
-            }
-        });
-    });
-});
-
-it("should throw error on invalid mode", async () => {
-    const scriptPath = join(process.cwd(), "test", "fixtures", "invalid_mode_app.js");
-
-    await new Promise((resolve, reject) => {
-        const child = spawn("node", [scriptPath], {
-            stdio: "pipe",
-            env: { ...process.env },
-        });
-
-        let stderr = "";
-
-        child.stderr.on("data", (data) => {
-            stderr += data.toString();
-        });
-
-        child.on("close", (code) => {
-            try {
-                assert.notEqual(code, 0, "Process should exit with error code");
-                assert.match(stderr, /Invalid configuration: mode/);
-                resolve();
-            } catch (err) {
-                reject(err);
-            }
-        });
-    });
-});
+}
