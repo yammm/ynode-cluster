@@ -112,6 +112,12 @@ export function run(startWorker, options = true, log = console) {
         );
     }
 
+    if (!["smart", "max"].includes(mode)) {
+        throw new Error(
+            `Invalid configuration: mode (${mode}) must be either "smart" or "max"`,
+        );
+    }
+
     if (scaleUpThreshold <= scaleDownThreshold) {
         throw new Error(
             `Invalid configuration: scaleUpThreshold (${scaleUpThreshold}) must be greater than scaleDownThreshold (${scaleDownThreshold})`,
