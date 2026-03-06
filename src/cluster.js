@@ -599,18 +599,23 @@ export function run(startWorker, options = true, log = console) {
             const avgLag = totalLag / count;
             // Calculate Average Memory in MB
             let totalMemory = 0; // Bytes
+            let memorySamples = 0;
             for (const stats of workerLoads.values()) {
-                if (stats.memory) {
+                if (typeof stats.memory === "number") {
                     totalMemory += stats.memory;
+                    memorySamples += 1;
                 }
             }
-            const avgMemoryMB = count > 0 ? totalMemory / count / 1024 / 1024 : 0;
+            const avgMemoryMB = memorySamples > 0 ? totalMemory / memorySamples / 1024 / 1024 : 0;
 
             const currentWorkers = getWorkerCount();
 
             // Leak Protection (Max Worker Memory)
             if (maxWorkerMemory > 0) {
                 for (const [id, stats] of workerLoads.entries()) {
+                    if (typeof stats.memory !== "number") {
+                        continue;
+                    }
                     const memMB = stats.memory / 1024 / 1024;
                     // console.log(`[Master] Checking Worker ${id} Memory: ${memMB.toFixed(2)}MB (Limit: ${maxWorkerMemory}MB)`);
                     if (memMB > maxWorkerMemory) {
@@ -701,13 +706,14 @@ export function run(startWorker, options = true, log = console) {
                 count++;
 
                 const worker = cluster.workers[id];
+                const workerStartTime = workerStartTimes.get(id);
                 workersData.push({
                     id,
                     pid: worker?.process.pid,
                     lag: stats.lag,
                     memory: stats.memory,
                     lastSeen: stats.lastSeen,
-                    uptime: worker ? Date.now() - stats.lastSeen : undefined,
+                    uptime: workerStartTime ? Date.now() - workerStartTime : undefined,
                 });
             }
 

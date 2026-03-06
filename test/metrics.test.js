@@ -51,6 +51,10 @@ describe("Metrics API", () => {
                         assert.ok(json.workerCount >= 2, "Should have at least 2 workers");
                         assert.ok(Array.isArray(json.workers));
                         assert.equal(json.workers.length, json.workerCount);
+                        for (const worker of json.workers) {
+                            assert.equal(typeof worker.uptime, "number");
+                            assert.ok(worker.uptime >= 0, "Expected uptime >= 0");
+                        }
                         cleanup();
                         resolve();
                     } catch (err) {
