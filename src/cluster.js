@@ -143,6 +143,7 @@ export function run(startWorker, options = true, log = console) {
     const restartBackoffBaseMs = 100;
     const restartBackoffMaxMs = 5000;
     const restartBackoffResetUptimeMs = 30000;
+    const reloadOnlineTimeoutMs = 10000;
     const reloadListeningTimeoutMs = 10000;
 
     function attachWorkerErrorHandler(worker) {
@@ -213,6 +214,72 @@ export function run(startWorker, options = true, log = console) {
             };
 
             cluster.on("listening", onListening);
+        });
+    }
+
+    function waitForWorkerOnline(worker, timeoutMs = reloadOnlineTimeoutMs) {
+        if (!worker) {
+            return Promise.reject(new Error("Cannot wait for online: missing worker"));
+        }
+
+        return new Promise((resolve, reject) => {
+            let settled = false;
+            const timeout = setTimeout(() => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                cleanup();
+                reject(
+                    new Error(
+                        `Replacement worker ${worker.process.pid} did not become online within ${timeoutMs}ms`,
+                    ),
+                );
+            }, timeoutMs);
+            timeout.unref();
+
+            const cleanup = () => {
+                worker.off("online", onOnline);
+                worker.off("disconnect", onDisconnect);
+                worker.off("exit", onExit);
+                clearTimeout(timeout);
+            };
+
+            const onOnline = () => {
+                if (!settled) {
+                    settled = true;
+                    cleanup();
+                    resolve();
+                }
+            };
+
+            const onDisconnect = () => {
+                if (!settled) {
+                    settled = true;
+                    cleanup();
+                    reject(
+                        new Error(
+                            `Replacement worker ${worker.process.pid} disconnected before becoming online`,
+                        ),
+                    );
+                }
+            };
+
+            const onExit = (code, signal) => {
+                if (!settled) {
+                    settled = true;
+                    cleanup();
+                    reject(
+                        new Error(
+                            `Replacement worker ${worker.process.pid} exited before becoming online (code=${code}, signal=${signal})`,
+                        ),
+                    );
+                }
+            };
+
+            worker.on("online", onOnline);
+            worker.on("disconnect", onDisconnect);
+            worker.on("exit", onExit);
         });
     }
 
@@ -486,11 +553,21 @@ export function run(startWorker, options = true, log = console) {
                 // Fork a new worker
                 log.info("Spawning replacement worker...");
                 const newWorker = cluster.fork();
+                attachWorkerErrorHandler(newWorker);
 
                 // Wait for the new worker to be online
-                await new Promise((resolve) => {
-                    newWorker.once("online", resolve);
-                });
+                try {
+                    await waitForWorkerOnline(newWorker);
+                } catch (err) {
+                    log.error(
+                        `Reload aborted: replacement worker ${newWorker.process.pid} failed to come online.`,
+                        err,
+                    );
+                    if (newWorker.isConnected()) {
+                        newWorker.disconnect();
+                    }
+                    throw err;
+                }
 
                 const shouldWaitForListening = listeningWorkers.has(oldWorker.id);
                 if (shouldWaitForListening) {
