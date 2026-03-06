@@ -35,8 +35,10 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 import cluster from "node:cluster";
 import { EventEmitter } from "node:events";
 import os from "node:os";
+import { createInterface } from "node:readline";
 
 const HEARTBEAT_INTERVAL_MS = 2000;
+const DEFAULT_TTY_RELOAD_COMMAND = "rl";
 const VALID_MODES = new Set(["smart", "max"]);
 const NUMERIC_CONFIG_KEYS = [
     "minWorkers",
@@ -131,9 +133,66 @@ function validateNonNegativeNumericConfig(config) {
     }
 }
 
+function validateTtyConfig(ttyConfig) {
+    if (ttyConfig === undefined) {
+        return;
+    }
+
+    if (!isOptionsObject(ttyConfig)) {
+        throw new Error("Invalid configuration: tty must be an object");
+    }
+
+    if (ttyConfig.enabled !== undefined && typeof ttyConfig.enabled !== "boolean") {
+        throw new Error(
+            `Invalid configuration: tty.enabled (${ttyConfig.enabled}) must be a boolean`,
+        );
+    }
+
+    if (ttyConfig.commands !== undefined && typeof ttyConfig.commands !== "boolean") {
+        throw new Error(
+            `Invalid configuration: tty.commands (${ttyConfig.commands}) must be a boolean`,
+        );
+    }
+
+    if (
+        ttyConfig.reloadCommand !== undefined &&
+        (typeof ttyConfig.reloadCommand !== "string" || ttyConfig.reloadCommand.trim().length === 0)
+    ) {
+        throw new Error(
+            `Invalid configuration: tty.reloadCommand (${ttyConfig.reloadCommand}) must be a non-empty string`,
+        );
+    }
+
+    if (ttyConfig.stdin !== undefined && typeof ttyConfig.stdin.on !== "function") {
+        throw new Error("Invalid configuration: tty.stdin must be a readable stream");
+    }
+
+    if (ttyConfig.stdout !== undefined && typeof ttyConfig.stdout.write !== "function") {
+        throw new Error("Invalid configuration: tty.stdout must be a writable stream");
+    }
+
+    if (ttyConfig.prompt !== undefined && typeof ttyConfig.prompt !== "string") {
+        throw new Error(`Invalid configuration: tty.prompt (${ttyConfig.prompt}) must be a string`);
+    }
+}
+
+function buildTtyConfig(ttyOptions) {
+    const rawTty = isOptionsObject(ttyOptions) ? ttyOptions : {};
+
+    return {
+        enabled: rawTty.enabled ?? false,
+        commands: rawTty.commands ?? true,
+        reloadCommand: rawTty.reloadCommand ?? DEFAULT_TTY_RELOAD_COMMAND,
+        stdin: rawTty.stdin ?? process.stdin,
+        stdout: rawTty.stdout ?? process.stdout,
+        prompt: rawTty.prompt,
+    };
+}
+
 function validateClusterConfig(config) {
     validateFiniteNumericConfig(config);
     validateNonNegativeNumericConfig(config);
+    validateTtyConfig(config.tty);
 
     if (typeof config.norestart !== "boolean") {
         throw new Error(`Invalid configuration: norestart (${config.norestart}) must be a boolean`);
@@ -236,6 +295,13 @@ function validateClusterConfig(config) {
  * @param {number} [options.reloadOnlineTimeout=10000] - Max ms to wait for replacement worker "online" during reload.
  * @param {number} [options.reloadListeningTimeout=10000] - Max ms to wait for replacement worker "listening" during reload.
  * @param {number} [options.reloadDisconnectWait=2000] - Max ms to wait for old worker disconnect during each reload step.
+ * @param {object} [options.tty] - Optional TTY command mode options.
+ * @param {boolean} [options.tty.enabled=false] - Enable TTY mode in master process.
+ * @param {boolean} [options.tty.commands=true] - Enable line-based command handling when TTY mode is enabled.
+ * @param {string} [options.tty.reloadCommand="rl"] - Command that triggers a cluster reload.
+ * @param {import("node:stream").Readable} [options.tty.stdin=process.stdin] - Input stream used for command mode.
+ * @param {import("node:stream").Writable} [options.tty.stdout=process.stdout] - Output stream used for command mode.
+ * @param {string} [options.tty.prompt] - Optional command prompt text.
  * @param {object} log - The logger instance.
  */
 export function run(startWorker, options = true, log = console) {
@@ -305,7 +371,9 @@ export function run(startWorker, options = true, log = console) {
         reloadOnlineTimeout,
         reloadListeningTimeout,
         reloadDisconnectWait,
+        tty: ttyOptions,
     } = config;
+    const ttyConfig = buildTtyConfig(ttyOptions);
 
     const initialWorkers = mode === "max" ? maxWorkers : minWorkers;
     log.info(`Shogun is the master! Starting ${initialWorkers} workers (Max: ${maxWorkers}).`);
@@ -648,7 +716,16 @@ export function run(startWorker, options = true, log = console) {
     let forceExitTimer;
     let closePromise;
     let reloadPromise;
+    let ttyReadline;
     const signalHandlers = new Map();
+
+    function closeTtyCommandMode() {
+        if (!ttyReadline) {
+            return;
+        }
+        ttyReadline.close();
+        ttyReadline = undefined;
+    }
 
     function removeSignalHandlers() {
         for (const [signal, handler] of signalHandlers.entries()) {
@@ -716,6 +793,7 @@ export function run(startWorker, options = true, log = console) {
         }
 
         isShuttingDown = true;
+        closeTtyCommandMode();
         emitLifecycle("shutdown_start", { signal, workerCount: getWorkerCount() });
         if (autoScaleTimer) {
             clearInterval(autoScaleTimer);
@@ -737,6 +815,7 @@ export function run(startWorker, options = true, log = console) {
                 }
                 removeSignalHandlers();
                 removeClusterHandlers();
+                closeTtyCommandMode();
                 emitLifecycle("shutdown_end", { workerCount: getWorkerCount() });
                 if (exitOnComplete) {
                     process.exit(0);
@@ -1031,6 +1110,69 @@ export function run(startWorker, options = true, log = console) {
             return manager;
         },
     };
+
+    function setupTtyCommandMode() {
+        if (!ttyConfig.enabled || !ttyConfig.commands) {
+            return;
+        }
+
+        const commandInput = ttyConfig.stdin;
+        const commandOutput = ttyConfig.stdout;
+        const reloadCommand = ttyConfig.reloadCommand;
+        const prompt = ttyConfig.prompt;
+
+        if (commandInput.isTTY !== true) {
+            log.info("TTY command mode skipped (non-TTY stdin).");
+            return;
+        }
+
+        ttyReadline = createInterface({
+            input: commandInput,
+            output: commandOutput,
+            terminal: true,
+        });
+        log.info(`TTY command mode enabled. Type '${reloadCommand}' to reload workers.`);
+
+        const showPrompt = () => {
+            if (typeof prompt === "string" && prompt.length > 0 && ttyReadline) {
+                ttyReadline.setPrompt(prompt);
+                ttyReadline.prompt();
+            }
+        };
+
+        ttyReadline.on("line", (line) => {
+            const command = line.trim();
+            if (command === reloadCommand) {
+                if (reloadPromise) {
+                    log.info("TTY: reload already in progress.");
+                    showPrompt();
+                    return;
+                }
+
+                log.info("TTY: reload command received.");
+                manager.reload().catch((err) => {
+                    log.error("TTY: reload command failed.", err);
+                });
+                showPrompt();
+                return;
+            }
+
+            if (command.length > 0) {
+                commandOutput.write(`TTY commands: ${reloadCommand}\n`);
+            }
+            showPrompt();
+        });
+
+        ttyReadline.on("close", () => {
+            if (ttyReadline) {
+                ttyReadline = undefined;
+            }
+        });
+
+        showPrompt();
+    }
+
+    setupTtyCommandMode();
 
     return manager;
 }

@@ -1,6 +1,43 @@
 /**
  * Configuration options for the cluster manager.
  */
+export interface ClusterTtyOptions {
+    /**
+     * Enables TTY command mode in the master process.
+     * Default: false.
+     */
+    enabled?: boolean;
+
+    /**
+     * Enables stdin command handling when TTY is enabled.
+     * Default: true.
+     */
+    commands?: boolean;
+
+    /**
+     * Command that triggers cluster reload.
+     * Default: "rl".
+     */
+    reloadCommand?: string;
+
+    /**
+     * Input stream for command mode.
+     * Default: process.stdin.
+     */
+    stdin?: NodeJS.ReadStream;
+
+    /**
+     * Output stream for command mode.
+     * Default: process.stdout.
+     */
+    stdout?: NodeJS.WriteStream;
+
+    /**
+     * Optional command prompt text.
+     */
+    prompt?: string;
+}
+
 export interface ClusterOptions {
     /**
      * Whether clustering is enabled. Default: true.
@@ -104,6 +141,11 @@ export interface ClusterOptions {
      * Default: 2000.
      */
     reloadDisconnectWait?: number;
+
+    /**
+     * Optional TTY command mode settings.
+     */
+    tty?: ClusterTtyOptions;
 }
 
 export type ClusterEventName =

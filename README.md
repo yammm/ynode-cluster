@@ -93,6 +93,13 @@ The `run(startWorker, options)` function accepts the following options:
 | `reloadOnlineTimeout`    | `number`           | `10000`                                  | Max time (ms) to wait for replacement worker `online` during reload.                              |
 | `reloadListeningTimeout` | `number`           | `10000`                                  | Max time (ms) to wait for replacement worker `listening` when replacing a listening worker.       |
 | `reloadDisconnectWait`   | `number`           | `2000`                                   | Max time (ms) to wait for an old worker to disconnect during each reload step.                    |
+| `tty`                    | `object`           | `{ enabled: false }`                     | Optional TTY command mode settings for interactive master commands.                               |
+| `tty.enabled`            | `boolean`          | `false`                                  | Enables TTY command mode in the master process.                                                   |
+| `tty.commands`           | `boolean`          | `true`                                   | Enables command handling when `tty.enabled` is true.                                              |
+| `tty.reloadCommand`      | `string`           | `"rl"`                                   | Command text that triggers a zero-downtime reload.                                                |
+| `tty.stdin`              | `Readable`         | `process.stdin`                          | Input stream used for TTY command mode.                                                           |
+| `tty.stdout`             | `Writable`         | `process.stdout`                         | Output stream used for TTY command mode.                                                          |
+| `tty.prompt`             | `string`           | _(none)_                                 | Optional prompt text shown by command mode.                                                       |
 | `scaleUpMemory`          | `number`           | `0`                                      | Threshold (MB) for average heap usage to trigger scaling up.                                      |
 | `maxWorkerMemory`        | `number`           | `0`                                      | Max heap usage (MB) for a worker before restart (Leak Protection).                                |
 | `norestart`              | `boolean`          | `false`                                  | If true, workers will not be restarted when they die.                                             |
