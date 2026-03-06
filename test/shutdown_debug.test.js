@@ -52,8 +52,8 @@ describe("Cluster Shutdown", () => {
 
                     const shutdownMessages = output.match(/received shutdown message/g) ?? [];
                     assert.ok(
-                        shutdownMessages.length >= 1,
-                        `Expected at least one worker to receive shutdown message.\nOutput:\n${output}`,
+                        shutdownMessages.length >= 2,
+                        `Expected both workers to receive shutdown message.\nOutput:\n${output}`,
                     );
                     assert.notEqual(code, null, `Expected process to exit normally.\nOutput:\n${output}`);
 

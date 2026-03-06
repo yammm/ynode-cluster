@@ -503,10 +503,46 @@ export function run(startWorker, options = true, log = console) {
     }
 
     function disconnectWorkersForShutdown() {
+        function disconnectWorker(worker) {
+            try {
+                worker.disconnect();
+            } catch (err) {
+                log.debug(`Failed to disconnect worker ${worker.process.pid}:`, err);
+            }
+        }
+
         for (const worker of getWorkers()) {
             attachWorkerErrorHandler(worker);
-            sendToWorker(worker, "shutdown");
-            worker.disconnect();
+            if (!worker.isConnected()) {
+                disconnectWorker(worker);
+                continue;
+            }
+
+            let disconnected = false;
+            const disconnectOnce = () => {
+                if (disconnected) {
+                    return;
+                }
+                disconnected = true;
+                disconnectWorker(worker);
+            };
+
+            const fallbackTimer = setTimeout(disconnectOnce, 50);
+            fallbackTimer.unref();
+
+            try {
+                worker.send("shutdown", (err) => {
+                    if (err) {
+                        log.debug(`Failed to send shutdown message to worker ${worker.process.pid}:`, err);
+                    }
+                    clearTimeout(fallbackTimer);
+                    disconnectOnce();
+                });
+            } catch (err) {
+                clearTimeout(fallbackTimer);
+                log.debug(`Failed to send shutdown message to worker ${worker.process.pid}:`, err);
+                disconnectOnce();
+            }
         }
     }
 
