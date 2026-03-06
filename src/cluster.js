@@ -239,6 +239,12 @@ function validateClusterConfig(config) {
  * @param {object} log - The logger instance.
  */
 export function run(startWorker, options = true, log = console) {
+    if (typeof startWorker !== "function") {
+        throw new Error(
+            `Invalid configuration: startWorker (${typeof startWorker}) must be a function`,
+        );
+    }
+
     const isEnabled = resolveClusteringEnabled(options);
     let isShuttingDown = false;
 
