@@ -116,7 +116,11 @@ describe("Cluster Manager Features", () => {
                 clearTimeout(timeout);
 
                 try {
-                    assert.notEqual(code, 0, `Expected non-zero exit for invalid config.\nOutput:\n${output}`);
+                    assert.notEqual(
+                        code,
+                        0,
+                        `Expected non-zero exit for invalid config.\nOutput:\n${output}`,
+                    );
                     assert.match(output, /Invalid configuration: reloadOnlineTimeout/);
                     resolve();
                 } catch (err) {
@@ -130,7 +134,11 @@ describe("Cluster Manager Features", () => {
                 }
                 settled = true;
                 cleanup("SIGKILL");
-                reject(new Error("Timeout waiting for invalid reload timeout fixture. Output:\n" + output));
+                reject(
+                    new Error(
+                        "Timeout waiting for invalid reload timeout fixture. Output:\n" + output,
+                    ),
+                );
             }, 5000).unref();
         });
     });
@@ -210,7 +218,11 @@ describe("Cluster Manager Features", () => {
                 }
                 settled = true;
                 cleanup("SIGKILL");
-                reject(new Error("Timeout waiting for reload failure dedupe fixture. Output:\n" + output));
+                reject(
+                    new Error(
+                        "Timeout waiting for reload failure dedupe fixture. Output:\n" + output,
+                    ),
+                );
             }, 10000).unref();
         });
     });

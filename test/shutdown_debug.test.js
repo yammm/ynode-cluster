@@ -55,7 +55,11 @@ describe("Cluster Shutdown", () => {
                         shutdownMessages.length >= 2,
                         `Expected both workers to receive shutdown message.\nOutput:\n${output}`,
                     );
-                    assert.notEqual(code, null, `Expected process to exit normally.\nOutput:\n${output}`);
+                    assert.notEqual(
+                        code,
+                        null,
+                        `Expected process to exit normally.\nOutput:\n${output}`,
+                    );
 
                     resolve();
                 } catch (err) {

@@ -74,7 +74,11 @@ describe("Metrics API", () => {
                     reject(new Error("Child exited without printing metrics. Output:\n" + output));
                     return;
                 }
-                reject(new Error("Child exited before metrics assertion completed. Output:\n" + output));
+                reject(
+                    new Error(
+                        "Child exited before metrics assertion completed. Output:\n" + output,
+                    ),
+                );
             });
         });
     });

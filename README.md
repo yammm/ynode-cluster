@@ -64,7 +64,8 @@ You can reload the cluster (e.g. after a code deployment) without dropping conne
 `control.reload()`. This will:
 
 1. Sequentially start a new worker.
-2. Wait for it to come online, and if the old worker was serving traffic, wait for the replacement to become listening.
+2. Wait for it to come online, and if the old worker was serving traffic, wait for the replacement
+   to become listening.
 3. Gracefully shutdown the old worker.
 
 ```js
@@ -76,25 +77,25 @@ console.log("Reload complete!");
 
 The `run(startWorker, options)` function accepts the following options:
 
-| Option               | Type               | Default                            | Description                                                                                       |
-| -------------------- | ------------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `enabled`            | `boolean`          | `true`                             | Whether to enable clustering. If `false`, runs `startWorker` directly in the main process.        |
-| `mode`               | `"smart" \| "max"` | `"smart"`                          | `"smart"` enables auto-scaling based on load. `"max"` spawns `maxWorkers` and keeps them running. |
-| `minWorkers`         | `number`           | `Math.min(2, os.availableParallelism())` | Minimum number of workers to keep alive in "smart" mode.                                   |
-| `maxWorkers`         | `number`           | `os.availableParallelism()`        | Maximum number of workers to spawn.                                                               |
-| `scaleUpThreshold`   | `number`           | `50`                               | Event loop lag (ms) threshold to trigger scaling up.                                              |
-| `scaleDownThreshold` | `number`           | `10`                               | Event loop lag (ms) threshold to trigger scaling down.                                            |
-| `scalingCooldown`    | `number`           | `10000`                            | Minimum time (ms) between scaling actions.                                                        |
-| `scaleDownGrace`     | `number`           | `30000`                            | Grace period (ms) after scaling up before scaling down is allowed.                                |
-| `autoScaleInterval`  | `number`           | `5000`                             | Interval (ms) for auto-scaling checks in "smart" mode.                                            |
-| `shutdownSignals`    | `string[]`         | `['SIGINT', 'SIGTERM', 'SIGQUIT']` | Signals to listen for to trigger graceful shutdown.                                               |
-| `shutdownTimeout`    | `number`           | `10000`                            | Time (ms) to wait for workers to shutdown before forced exit.                                     |
-| `reloadOnlineTimeout` | `number`          | `10000`                            | Max time (ms) to wait for replacement worker `online` during reload.                              |
-| `reloadListeningTimeout` | `number`       | `10000`                            | Max time (ms) to wait for replacement worker `listening` when replacing a listening worker.       |
-| `reloadDisconnectWait` | `number`         | `2000`                             | Max time (ms) to wait for an old worker to disconnect during each reload step.                    |
-| `scaleUpMemory`      | `number`           | `0`                                | Threshold (MB) for average heap usage to trigger scaling up.                                      |
-| `maxWorkerMemory`    | `number`           | `0`                                | Max heap usage (MB) for a worker before restart (Leak Protection).                                |
-| `norestart`          | `boolean`          | `false`                            | If true, workers will not be restarted when they die.                                             |
+| Option                   | Type               | Default                                  | Description                                                                                       |
+| ------------------------ | ------------------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `enabled`                | `boolean`          | `true`                                   | Whether to enable clustering. If `false`, runs `startWorker` directly in the main process.        |
+| `mode`                   | `"smart" \| "max"` | `"smart"`                                | `"smart"` enables auto-scaling based on load. `"max"` spawns `maxWorkers` and keeps them running. |
+| `minWorkers`             | `number`           | `Math.min(2, os.availableParallelism())` | Minimum number of workers to keep alive in "smart" mode.                                          |
+| `maxWorkers`             | `number`           | `os.availableParallelism()`              | Maximum number of workers to spawn.                                                               |
+| `scaleUpThreshold`       | `number`           | `50`                                     | Event loop lag (ms) threshold to trigger scaling up.                                              |
+| `scaleDownThreshold`     | `number`           | `10`                                     | Event loop lag (ms) threshold to trigger scaling down.                                            |
+| `scalingCooldown`        | `number`           | `10000`                                  | Minimum time (ms) between scaling actions.                                                        |
+| `scaleDownGrace`         | `number`           | `30000`                                  | Grace period (ms) after scaling up before scaling down is allowed.                                |
+| `autoScaleInterval`      | `number`           | `5000`                                   | Interval (ms) for auto-scaling checks in "smart" mode.                                            |
+| `shutdownSignals`        | `string[]`         | `['SIGINT', 'SIGTERM', 'SIGQUIT']`       | Signals to listen for to trigger graceful shutdown.                                               |
+| `shutdownTimeout`        | `number`           | `10000`                                  | Time (ms) to wait for workers to shutdown before forced exit.                                     |
+| `reloadOnlineTimeout`    | `number`           | `10000`                                  | Max time (ms) to wait for replacement worker `online` during reload.                              |
+| `reloadListeningTimeout` | `number`           | `10000`                                  | Max time (ms) to wait for replacement worker `listening` when replacing a listening worker.       |
+| `reloadDisconnectWait`   | `number`           | `2000`                                   | Max time (ms) to wait for an old worker to disconnect during each reload step.                    |
+| `scaleUpMemory`          | `number`           | `0`                                      | Threshold (MB) for average heap usage to trigger scaling up.                                      |
+| `maxWorkerMemory`        | `number`           | `0`                                      | Max heap usage (MB) for a worker before restart (Leak Protection).                                |
+| `norestart`              | `boolean`          | `false`                                  | If true, workers will not be restarted when they die.                                             |
 
 ## Accessing Metrics
 
@@ -127,8 +128,8 @@ await manager.close(); // graceful shutdown without sending OS signals
 ```
 
 Available event names: `worker_online`, `worker_exit`, `worker_restart_scheduled`,
-`worker_listening`, `scale_up`, `scale_down`, `reload_start`, `reload_end`,
-`reload_fail`, `shutdown_start`, `shutdown_end`.
+`worker_listening`, `scale_up`, `scale_down`, `reload_start`, `reload_end`, `reload_fail`,
+`shutdown_start`, `shutdown_end`.
 
 ## Working with @ynode/autoshutdown
 

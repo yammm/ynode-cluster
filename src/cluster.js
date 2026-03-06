@@ -533,7 +533,10 @@ export function run(startWorker, options = true, log = console) {
             try {
                 worker.send("shutdown", (err) => {
                     if (err) {
-                        log.debug(`Failed to send shutdown message to worker ${worker.process.pid}:`, err);
+                        log.debug(
+                            `Failed to send shutdown message to worker ${worker.process.pid}:`,
+                            err,
+                        );
                     }
                     clearTimeout(fallbackTimer);
                     disconnectOnce();
