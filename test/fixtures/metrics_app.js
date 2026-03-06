@@ -1,14 +1,13 @@
 import { run } from "../../src/cluster.js";
-import http from "node:http";
 
 const manager = run(
     () => {
-        // Worker code
-        const server = http.createServer((req, res) => {
-            res.writeHead(200);
-            res.end("hello world\n");
+        // Keep worker alive without opening sockets (sandbox-safe).
+        const keepAlive = setInterval(() => {}, 1000);
+        process.on("disconnect", () => {
+            clearInterval(keepAlive);
+            process.exit(0);
         });
-        server.listen(0);
     },
     {
         minWorkers: 2,
@@ -19,10 +18,22 @@ const manager = run(
 
 if (manager) {
     // We are in master
-    setTimeout(() => {
+    const startedAt = Date.now();
+    const interval = setInterval(() => {
         const metrics = manager.getMetrics();
-        console.log("METRICS_JSON:" + JSON.stringify(metrics));
-        // Force exit to cleanup
-        process.exit(0);
-    }, 3000);
+        const ready = metrics.workerCount >= 2 && metrics.workers.length === metrics.workerCount;
+
+        if (ready) {
+            console.log("METRICS_JSON:" + JSON.stringify(metrics));
+            clearInterval(interval);
+            process.exit(0);
+            return;
+        }
+
+        if (Date.now() - startedAt > 12000) {
+            console.log("METRICS_JSON:" + JSON.stringify(metrics));
+            clearInterval(interval);
+            process.exit(1);
+        }
+    }, 200);
 }

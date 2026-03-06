@@ -4,7 +4,7 @@ import { strict as assert } from "node:assert";
 import { join } from "node:path";
 
 describe("Metrics API", () => {
-    it("should export metrics via getMetrics()", async (t) => {
+    it("should export metrics via getMetrics()", async () => {
         const scriptPath = join(process.cwd(), "test", "fixtures", "metrics_app.js");
 
         await new Promise((resolve, reject) => {
@@ -14,18 +14,19 @@ describe("Metrics API", () => {
             });
 
             let output = "";
-            let resolved = false;
+            let settled = false;
 
             const cleanup = () => {
                 try {
-                    child.kill();
+                    child.kill("SIGTERM");
                 } catch (err) {
                     console.debug(err);
                 }
             };
 
-            setTimeout(() => {
-                if (!resolved) {
+            const timeout = setTimeout(() => {
+                if (!settled) {
+                    settled = true;
                     cleanup();
                     reject(
                         new Error(
@@ -33,36 +34,43 @@ describe("Metrics API", () => {
                         ),
                     );
                 }
-            }, 10000).unref();
+            }, 15000).unref();
 
             child.stdout.on("data", (data) => {
                 output += data.toString();
-                if (output.includes("METRICS_JSON:")) {
-                    const line = output.split("\n").find((l) => l.includes("METRICS_JSON:"));
-                    if (line) {
-                        try {
-                            const json = JSON.parse(line.split("METRICS_JSON:")[1]);
-                            assert.equal(typeof json.avgLag, "number");
-                            assert.equal(typeof json.workerCount, "number");
-                            assert.ok(json.workerCount >= 2, "Should have at least 2 workers");
-                            assert.ok(Array.isArray(json.workers));
-                            assert.equal(json.workers.length, json.workerCount);
-
-                            resolved = true;
-                            cleanup();
-                            resolve();
-                        } catch (err) {
-                            // wait for more data if JSON incomplete? No, line should be complete
-                            console.debug(err);
-                        }
+                const line = output
+                    .split("\n")
+                    .find((l) => l.includes("METRICS_JSON:") && l.split("METRICS_JSON:")[1]);
+                if (line && !settled) {
+                    settled = true;
+                    clearTimeout(timeout);
+                    try {
+                        const json = JSON.parse(line.split("METRICS_JSON:")[1]);
+                        assert.equal(typeof json.avgLag, "number");
+                        assert.equal(typeof json.workerCount, "number");
+                        assert.ok(json.workerCount >= 2, "Should have at least 2 workers");
+                        assert.ok(Array.isArray(json.workers));
+                        assert.equal(json.workers.length, json.workerCount);
+                        cleanup();
+                        resolve();
+                    } catch (err) {
+                        cleanup();
+                        reject(new Error(`${err.message}\nOutput:\n${output}`));
                     }
                 }
             });
 
             child.addListener("close", (code) => {
-                if (!resolved) {
-                    reject(new Error("Child exited without printing metrics. Output:\n" + output));
+                if (settled) {
+                    return;
                 }
+                settled = true;
+                clearTimeout(timeout);
+                if (code !== 0) {
+                    reject(new Error("Child exited without printing metrics. Output:\n" + output));
+                    return;
+                }
+                reject(new Error("Child exited before metrics assertion completed. Output:\n" + output));
             });
         });
     });
