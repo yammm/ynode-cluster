@@ -166,6 +166,18 @@ function validateClusterConfig(config) {
         );
     }
 
+    if (config.scaleUpThreshold < 0) {
+        throw new Error(
+            `Invalid configuration: scaleUpThreshold (${config.scaleUpThreshold}) must be >= 0`,
+        );
+    }
+
+    if (config.scaleDownThreshold < 0) {
+        throw new Error(
+            `Invalid configuration: scaleDownThreshold (${config.scaleDownThreshold}) must be >= 0`,
+        );
+    }
+
     if (config.minWorkers > config.maxWorkers) {
         throw new Error(
             `Invalid configuration: minWorkers (${config.minWorkers}) cannot be greater than maxWorkers (${config.maxWorkers})`,
