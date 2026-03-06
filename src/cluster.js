@@ -148,6 +148,12 @@ function validateClusterConfig(config) {
         );
     }
 
+    if (new Set(config.shutdownSignals).size !== config.shutdownSignals.length) {
+        throw new Error(
+            `Invalid configuration: shutdownSignals (${config.shutdownSignals}) must not contain duplicates`,
+        );
+    }
+
     if (!Number.isInteger(config.minWorkers) || config.minWorkers < 1) {
         throw new Error(
             `Invalid configuration: minWorkers (${config.minWorkers}) must be an integer >= 1`,
