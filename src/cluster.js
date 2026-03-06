@@ -35,6 +35,55 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 import cluster from "node:cluster";
 import os from "node:os";
 
+const HEARTBEAT_INTERVAL_MS = 2000;
+const VALID_MODES = new Set(["smart", "max"]);
+
+function resolveClusteringEnabled(options) {
+    return typeof options === "object" ? (options.enabled ?? true) : options;
+}
+
+function buildClusterConfig(options) {
+    const cpuCount = os.availableParallelism();
+    const rawOptions = typeof options === "object" ? options : {};
+
+    return {
+        minWorkers: Math.min(2, cpuCount),
+        maxWorkers: cpuCount,
+        scaleUpThreshold: 50,
+        scaleDownThreshold: 10,
+        mode: "smart",
+        scalingCooldown: 10000,
+        scaleDownGrace: 30000,
+        autoScaleInterval: 5000,
+        shutdownSignals: ["SIGINT", "SIGTERM", "SIGQUIT"],
+        shutdownTimeout: 10000,
+        scaleUpMemory: 0,
+        maxWorkerMemory: 0,
+        norestart: false,
+        ...rawOptions,
+    };
+}
+
+function validateClusterConfig(config) {
+    if (config.minWorkers > config.maxWorkers) {
+        throw new Error(
+            `Invalid configuration: minWorkers (${config.minWorkers}) cannot be greater than maxWorkers (${config.maxWorkers})`,
+        );
+    }
+
+    if (!VALID_MODES.has(config.mode)) {
+        throw new Error(
+            `Invalid configuration: mode (${config.mode}) must be either "smart" or "max"`,
+        );
+    }
+
+    if (config.scaleUpThreshold <= config.scaleDownThreshold) {
+        throw new Error(
+            `Invalid configuration: scaleUpThreshold (${config.scaleUpThreshold}) must be greater than scaleDownThreshold (${config.scaleDownThreshold})`,
+        );
+    }
+}
+
 /**
  * Manages the application"s clustering.
  * @param {function} startWorker - The function to execute when a worker process starts.
@@ -50,7 +99,7 @@ import os from "node:os";
  * @param {object} log - The logger instance.
  */
 export function run(startWorker, options = true, log = console) {
-    const isEnabled = typeof options === "object" ? (options.enabled ?? true) : options;
+    const isEnabled = resolveClusteringEnabled(options);
     let isShuttingDown = false;
 
     if (cluster.isWorker || !isEnabled) {
@@ -69,7 +118,7 @@ export function run(startWorker, options = true, log = console) {
                 const now = Date.now();
 
                 // Approximate event loop lag
-                const lag = now - lastCheck - 2000;
+                const lag = now - lastCheck - HEARTBEAT_INTERVAL_MS;
                 lastCheck = now;
 
                 const memory = process.memoryUsage();
@@ -84,45 +133,30 @@ export function run(startWorker, options = true, log = console) {
                     // Ignore, channel probably closed
                     log.debug("Failed to send heartbeat to master", err);
                 }
-            }, 2000).unref();
+            }, HEARTBEAT_INTERVAL_MS).unref();
         }
 
         return startWorker();
     }
 
+    const config = buildClusterConfig(options);
+    validateClusterConfig(config);
+
     const {
-        minWorkers = Math.min(2, os.availableParallelism()),
-        maxWorkers = os.availableParallelism(),
-        scaleUpThreshold = 50, // ms lag
-        scaleDownThreshold = 10, // ms lag
-        mode = "smart", // 'smart' or 'max'
-        scalingCooldown = 10000,
-        scaleDownGrace = 30000,
-        autoScaleInterval = 5000,
-        shutdownSignals = ["SIGINT", "SIGTERM", "SIGQUIT"],
-        shutdownTimeout = 10000,
-        scaleUpMemory = 0, // MB (0 = disabled)
-        maxWorkerMemory = 0, // MB (0 = disabled)
-        norestart = false,
-    } = typeof options === "object" ? options : {};
-
-    if (minWorkers > maxWorkers) {
-        throw new Error(
-            `Invalid configuration: minWorkers (${minWorkers}) cannot be greater than maxWorkers (${maxWorkers})`,
-        );
-    }
-
-    if (!["smart", "max"].includes(mode)) {
-        throw new Error(
-            `Invalid configuration: mode (${mode}) must be either "smart" or "max"`,
-        );
-    }
-
-    if (scaleUpThreshold <= scaleDownThreshold) {
-        throw new Error(
-            `Invalid configuration: scaleUpThreshold (${scaleUpThreshold}) must be greater than scaleDownThreshold (${scaleDownThreshold})`,
-        );
-    }
+        minWorkers,
+        maxWorkers,
+        scaleUpThreshold, // ms lag
+        scaleDownThreshold, // ms lag
+        mode, // 'smart' or 'max'
+        scalingCooldown,
+        scaleDownGrace,
+        autoScaleInterval,
+        shutdownSignals,
+        shutdownTimeout,
+        scaleUpMemory, // MB (0 = disabled)
+        maxWorkerMemory, // MB (0 = disabled)
+        norestart,
+    } = config;
 
     const initialWorkers = mode === "max" ? maxWorkers : minWorkers;
     log.info(`Shogun is the master! Starting ${initialWorkers} workers (Max: ${maxWorkers}).`);
@@ -131,11 +165,7 @@ export function run(startWorker, options = true, log = console) {
 
     // Fork initial workers
     for (let i = 0; i < initialWorkers; ++i) {
-        try {
-            cluster.fork();
-        } catch (err) {
-            log.error("Failed to fork initial worker:", err);
-        }
+        forkWorker("fork initial worker");
         lastScaleUpTime = Date.now();
     }
 
@@ -151,6 +181,19 @@ export function run(startWorker, options = true, log = console) {
     const restartBackoffResetUptimeMs = 30000;
     const reloadOnlineTimeoutMs = 10000;
     const reloadListeningTimeoutMs = 10000;
+    const reloadDisconnectWaitMs = 2000;
+
+    const getWorkers = () => Object.values(cluster.workers).filter(Boolean);
+    const getWorkerCount = () => Object.keys(cluster.workers).length;
+
+    function forkWorker(context) {
+        try {
+            return cluster.fork();
+        } catch (err) {
+            log.error(`Failed to ${context}:`, err);
+            return null;
+        }
+    }
 
     function attachWorkerErrorHandler(worker) {
         if (!worker || workersWithErrorHandler.has(worker)) {
@@ -290,8 +333,8 @@ export function run(startWorker, options = true, log = console) {
     }
 
     function broadcastWorkerCount() {
-        const count = Object.keys(cluster.workers).length;
-        for (const worker of Object.values(cluster.workers)) {
+        const count = getWorkerCount();
+        for (const worker of getWorkers()) {
             attachWorkerErrorHandler(worker);
             sendToWorker(worker, { cmd: "cluster-count", count });
         }
@@ -322,7 +365,7 @@ export function run(startWorker, options = true, log = console) {
         workerStartTimes.delete(worker.id);
         listeningWorkers.delete(worker.id);
         workerLoads.delete(worker.id);
-        const currentWorkers = Object.keys(cluster.workers).length;
+        const currentWorkers = getWorkerCount();
 
         if (worker.exitedAfterDisconnect) {
             return log.info(
@@ -362,11 +405,7 @@ export function run(startWorker, options = true, log = console) {
                 return;
             }
 
-            try {
-                cluster.fork();
-            } catch (err) {
-                log.error("Failed to restart worker:", err);
-            }
+            forkWorker("restart worker");
             broadcastWorkerCount();
         }, restartDelay);
 
@@ -378,7 +417,7 @@ export function run(startWorker, options = true, log = console) {
 
     cluster.on("listening", (worker, address) => {
         listeningWorkers.add(worker.id);
-        const currentWorkers = Object.keys(cluster.workers).length;
+        const currentWorkers = getWorkerCount();
         log.info(
             `A worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] is now connected to ${address.address}:${address.port}`,
         );
@@ -417,7 +456,7 @@ export function run(startWorker, options = true, log = console) {
             }
             const avgMemoryMB = count > 0 ? totalMemory / count / 1024 / 1024 : 0;
 
-            const currentWorkers = Object.keys(cluster.workers).length;
+            const currentWorkers = getWorkerCount();
 
             // Leak Protection (Max Worker Memory)
             if (maxWorkerMemory > 0) {
@@ -448,11 +487,7 @@ export function run(startWorker, options = true, log = console) {
                     : `High Lag (Avg: ${avgLag.toFixed(2)}ms)`;
 
                 log.info(`${reason} detected. Scaling up...`);
-                try {
-                    cluster.fork();
-                } catch (err) {
-                    log.error("Failed to scale up:", err);
-                }
+                forkWorker("scale up");
                 lastScaleUpTime = Date.now();
                 lastScalingAction = now;
 
@@ -466,11 +501,11 @@ export function run(startWorker, options = true, log = console) {
                 }
 
                 log.info(`Low load detected (Avg Lag: ${avgLag.toFixed(2)}ms). Scaling down...`);
-                // Kill the last worker
-                const workerIds = Object.keys(cluster.workers);
-                const victimId = workerIds[workerIds.length - 1];
-                if (victimId) {
-                    cluster.workers[victimId].disconnect();
+                // Disconnect the latest worker in the current snapshot.
+                const workers = getWorkers();
+                const victim = workers[workers.length - 1];
+                if (victim) {
+                    victim.disconnect();
                     lastScalingAction = now;
                 }
 
@@ -486,12 +521,10 @@ export function run(startWorker, options = true, log = console) {
             process.on(signal, () => {
                 log.info(`Master received ${signal}, shutting down workers...`);
                 isShuttingDown = true;
-                for (const worker of Object.values(cluster.workers)) {
-                    if (worker && worker.isConnected()) {
-                        attachWorkerErrorHandler(worker);
-                        sendToWorker(worker, "shutdown");
-                        worker.disconnect();
-                    }
+                for (const worker of getWorkers()) {
+                    attachWorkerErrorHandler(worker);
+                    sendToWorker(worker, "shutdown");
+                    worker.disconnect();
                 }
 
                 // Allow some time for workers to clean up
@@ -508,7 +541,7 @@ export function run(startWorker, options = true, log = console) {
     // Expose metrics API
     return {
         getMetrics: () => {
-            const currentWorkers = Object.keys(cluster.workers).length;
+            const currentWorkers = getWorkerCount();
             let totalLag = 0;
             let count = 0;
             const workersData = [];
@@ -549,16 +582,15 @@ export function run(startWorker, options = true, log = console) {
             log.info("Starting zero-downtime cluster reload...");
 
             // Get a snapshot of current workers to replace
-            const currentWorkers = Object.values(cluster.workers);
+            const workersToReplace = getWorkers();
 
-            for (const oldWorker of currentWorkers) {
-                if (!oldWorker) {
-                    continue;
-                }
-
+            for (const oldWorker of workersToReplace) {
                 // Fork a new worker
                 log.info("Spawning replacement worker...");
-                const newWorker = cluster.fork();
+                const newWorker = forkWorker("spawn replacement worker");
+                if (!newWorker) {
+                    throw new Error("Reload aborted: failed to spawn replacement worker");
+                }
                 attachWorkerErrorHandler(newWorker);
 
                 // Wait for the new worker to be online
@@ -610,7 +642,9 @@ export function run(startWorker, options = true, log = console) {
                 const disconnectPromise = new Promise((resolve) =>
                     oldWorker.once("disconnect", resolve),
                 );
-                const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 2000).unref());
+                const timeoutPromise = new Promise((resolve) =>
+                    setTimeout(resolve, reloadDisconnectWaitMs).unref(),
+                );
                 await Promise.race([disconnectPromise, timeoutPromise]);
             }
             log.info("Cluster reload complete.");
