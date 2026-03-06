@@ -38,6 +38,21 @@ import os from "node:os";
 
 const HEARTBEAT_INTERVAL_MS = 2000;
 const VALID_MODES = new Set(["smart", "max"]);
+const NUMERIC_CONFIG_KEYS = [
+    "minWorkers",
+    "maxWorkers",
+    "scaleUpThreshold",
+    "scaleDownThreshold",
+    "scalingCooldown",
+    "scaleDownGrace",
+    "autoScaleInterval",
+    "shutdownTimeout",
+    "scaleUpMemory",
+    "maxWorkerMemory",
+    "reloadOnlineTimeout",
+    "reloadListeningTimeout",
+    "reloadDisconnectWait",
+];
 
 function isOptionsObject(options) {
     return options !== null && typeof options === "object" && !Array.isArray(options);
@@ -80,7 +95,18 @@ function buildClusterConfig(options) {
     };
 }
 
+function validateFiniteNumericConfig(config) {
+    for (const key of NUMERIC_CONFIG_KEYS) {
+        const value = config[key];
+        if (typeof value !== "number" || !Number.isFinite(value)) {
+            throw new Error(`Invalid configuration: ${key} (${value}) must be a finite number`);
+        }
+    }
+}
+
 function validateClusterConfig(config) {
+    validateFiniteNumericConfig(config);
+
     if (config.minWorkers > config.maxWorkers) {
         throw new Error(
             `Invalid configuration: minWorkers (${config.minWorkers}) cannot be greater than maxWorkers (${config.maxWorkers})`,
