@@ -64,7 +64,7 @@ You can reload the cluster (e.g. after a code deployment) without dropping conne
 `control.reload()`. This will:
 
 1. Sequentially start a new worker.
-2. Wait for it to come online.
+2. Wait for it to come online, and if the old worker was serving traffic, wait for the replacement to become listening.
 3. Gracefully shutdown the old worker.
 
 ```js

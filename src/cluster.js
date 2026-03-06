@@ -135,6 +135,7 @@ export function run(startWorker, options = true, log = console) {
 
     const workerLoads = new Map();
     const workerStartTimes = new Map();
+    const listeningWorkers = new Set();
     const workersWithErrorHandler = new WeakSet();
     let lastScalingAction = Date.now();
     let consecutiveCrashRestarts = 0;
@@ -142,6 +143,7 @@ export function run(startWorker, options = true, log = console) {
     const restartBackoffBaseMs = 100;
     const restartBackoffMaxMs = 5000;
     const restartBackoffResetUptimeMs = 30000;
+    const reloadListeningTimeoutMs = 10000;
 
     function attachWorkerErrorHandler(worker) {
         if (!worker || workersWithErrorHandler.has(worker)) {
@@ -171,6 +173,47 @@ export function run(startWorker, options = true, log = console) {
         } catch (err) {
             log.debug(`Failed to send IPC message to worker ${worker.process.pid}:`, err);
         }
+    }
+
+    function waitForWorkerListening(worker, timeoutMs = reloadListeningTimeoutMs) {
+        if (!worker) {
+            return Promise.reject(new Error("Cannot wait for listening: missing worker"));
+        }
+        if (listeningWorkers.has(worker.id)) {
+            return Promise.resolve();
+        }
+
+        return new Promise((resolve, reject) => {
+            let settled = false;
+            const timeout = setTimeout(() => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                cleanup();
+                reject(
+                    new Error(
+                        `Replacement worker ${worker.process.pid} did not become listening within ${timeoutMs}ms`,
+                    ),
+                );
+            }, timeoutMs);
+            timeout.unref();
+
+            const cleanup = () => {
+                cluster.off("listening", onListening);
+                clearTimeout(timeout);
+            };
+
+            const onListening = (listeningWorker) => {
+                if (!settled && listeningWorker?.id === worker.id) {
+                    settled = true;
+                    cleanup();
+                    resolve();
+                }
+            };
+
+            cluster.on("listening", onListening);
+        });
     }
 
     function broadcastWorkerCount() {
@@ -204,6 +247,7 @@ export function run(startWorker, options = true, log = console) {
     cluster.on("exit", (worker, code, signal) => {
         const workerStartTime = workerStartTimes.get(worker.id);
         workerStartTimes.delete(worker.id);
+        listeningWorkers.delete(worker.id);
         workerLoads.delete(worker.id);
         const currentWorkers = Object.keys(cluster.workers).length;
 
@@ -260,6 +304,7 @@ export function run(startWorker, options = true, log = console) {
     });
 
     cluster.on("listening", (worker, address) => {
+        listeningWorkers.add(worker.id);
         const currentWorkers = Object.keys(cluster.workers).length;
         log.info(
             `A worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] is now connected to ${address.address}:${address.port}`,
@@ -447,15 +492,28 @@ export function run(startWorker, options = true, log = console) {
                     newWorker.once("online", resolve);
                 });
 
-                // Wait for the new worker to be listening (optional, but safer for zero-downtime)
-                // However, not all workers listen. strict zero-downtime usually implies listening.
-                // We'll stick to 'online' for generic support in v1,
-                // but maybe add a small delay or check?
-                // For now, 'online' means the process is up and running.
-
-                log.info(
-                    `Replacement worker ${newWorker.process.pid} is online. Gracefully shutting down old worker ${oldWorker.process.pid}...`,
-                );
+                const shouldWaitForListening = listeningWorkers.has(oldWorker.id);
+                if (shouldWaitForListening) {
+                    try {
+                        await waitForWorkerListening(newWorker);
+                    } catch (err) {
+                        log.error(
+                            `Reload aborted: replacement worker ${newWorker.process.pid} failed readiness check.`,
+                            err,
+                        );
+                        if (newWorker.isConnected()) {
+                            newWorker.disconnect();
+                        }
+                        throw err;
+                    }
+                    log.info(
+                        `Replacement worker ${newWorker.process.pid} is listening. Gracefully shutting down old worker ${oldWorker.process.pid}...`,
+                    );
+                } else {
+                    log.info(
+                        `Replacement worker ${newWorker.process.pid} is online. Gracefully shutting down old worker ${oldWorker.process.pid}...`,
+                    );
+                }
 
                 // Gracefully disconnect the old worker
                 oldWorker.disconnect();
