@@ -60,7 +60,17 @@ function isOptionsObject(options) {
 
 function resolveClusteringEnabled(options) {
     if (isOptionsObject(options)) {
-        return options.enabled ?? true;
+        if (options.enabled === undefined) {
+            return true;
+        }
+
+        if (typeof options.enabled !== "boolean") {
+            throw new Error(
+                `Invalid configuration: enabled (${options.enabled}) must be a boolean`,
+            );
+        }
+
+        return options.enabled;
     }
 
     if (typeof options === "boolean") {
@@ -106,6 +116,10 @@ function validateFiniteNumericConfig(config) {
 
 function validateClusterConfig(config) {
     validateFiniteNumericConfig(config);
+
+    if (typeof config.norestart !== "boolean") {
+        throw new Error(`Invalid configuration: norestart (${config.norestart}) must be a boolean`);
+    }
 
     if (config.minWorkers > config.maxWorkers) {
         throw new Error(
