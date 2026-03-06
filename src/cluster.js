@@ -472,6 +472,42 @@ export function run(startWorker, options = true, log = console) {
         });
     }
 
+    function waitForWorkerDisconnect(worker, timeoutMs = reloadDisconnectWait) {
+        if (!worker) {
+            return Promise.resolve("missing-worker");
+        }
+
+        return new Promise((resolve) => {
+            let settled = false;
+
+            const cleanup = () => {
+                worker.off("disconnect", onDisconnect);
+                clearTimeout(timeout);
+            };
+
+            const onDisconnect = () => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                cleanup();
+                resolve("disconnect");
+            };
+
+            const timeout = setTimeout(() => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                cleanup();
+                resolve("timeout");
+            }, timeoutMs);
+            timeout.unref();
+
+            worker.on("disconnect", onDisconnect);
+        });
+    }
+
     const managerEvents = new EventEmitter();
     const emitLifecycle = (type, payload = {}) => {
         managerEvents.emit(type, { type, ...payload });
@@ -957,14 +993,8 @@ export function run(startWorker, options = true, log = console) {
                     // Gracefully disconnect the old worker
                     oldWorker.disconnect();
 
-                    // Wait for disconnect confirmation or short timeout to proceed to next
-                    const disconnectPromise = new Promise((resolve) =>
-                        oldWorker.once("disconnect", resolve),
-                    );
-                    const timeoutPromise = new Promise((resolve) =>
-                        setTimeout(resolve, reloadDisconnectWait).unref(),
-                    );
-                    await Promise.race([disconnectPromise, timeoutPromise]);
+                    // Wait for disconnect confirmation or a short timeout to proceed.
+                    await waitForWorkerDisconnect(oldWorker);
                 }
                 log.info("Cluster reload complete.");
                 emitLifecycle("reload_end", { workerCount: getWorkerCount() });
