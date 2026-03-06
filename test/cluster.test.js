@@ -161,6 +161,78 @@ it("should support null options by using default cluster settings", async () => 
     });
 });
 
+it("should ignore malformed worker IPC messages", async () => {
+    const scriptPath = join(process.cwd(), "test", "fixtures", "malformed_message_app.js");
+
+    await new Promise((resolve, reject) => {
+        const child = spawn("node", [scriptPath], {
+            stdio: "pipe",
+            env: { ...process.env },
+        });
+
+        let output = "";
+        let settled = false;
+
+        const finish = (fn) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            clearTimeout(timeout);
+            try {
+                child.stdout?.removeAllListeners();
+                child.stderr?.removeAllListeners();
+                child.removeAllListeners();
+            } catch (err) {
+                console.debug(err);
+            }
+            fn();
+        };
+
+        const timeout = setTimeout(() => {
+            finish(() => {
+                try {
+                    child.kill("SIGKILL");
+                } catch (err) {
+                    console.debug(err);
+                }
+                reject(
+                    new Error("Timeout waiting for malformed-message fixture. Output:\n" + output),
+                );
+            });
+        }, 10000).unref();
+
+        child.stdout.on("data", (data) => {
+            output += data.toString();
+        });
+
+        child.stderr.on("data", (data) => {
+            output += data.toString();
+        });
+
+        child.on("close", (code) => {
+            finish(() => {
+                try {
+                    assert.equal(
+                        code,
+                        0,
+                        `Expected clean exit for malformed IPC handling.\n${output}`,
+                    );
+                    assert.match(output, /Shogun is the master!/);
+                    assert.doesNotMatch(output, /TypeError/);
+                    resolve();
+                } catch (err) {
+                    reject(err);
+                }
+            });
+        });
+
+        child.on("error", (err) => {
+            finish(() => reject(err));
+        });
+    });
+});
+
 it("should throw error on invalid configuration", async (t) => {
     const scriptPath = join(process.cwd(), "test", "fixtures", "invalid_app.js");
 

@@ -396,14 +396,18 @@ export function run(startWorker, options = true, log = console) {
         workerLoads.set(worker.id, { lag: 0, lastSeen: Date.now() });
 
         worker.on("message", (msg) => {
-            if (msg.cmd === "heartbeat") {
-                // console.log(`[Master] Heartbeat from ${worker.id}: ${msg.memory} bytes`);
-                workerLoads.set(worker.id, {
-                    lag: msg.lag,
-                    lastSeen: Date.now(),
-                    memory: msg.memory,
-                });
+            if (!msg || typeof msg !== "object" || msg.cmd !== "heartbeat") {
+                return;
             }
+
+            const lag = Number.isFinite(msg.lag) ? msg.lag : 0;
+            const memory = typeof msg.memory === "number" ? msg.memory : undefined;
+
+            workerLoads.set(worker.id, {
+                lag,
+                lastSeen: Date.now(),
+                memory,
+            });
         });
     };
 
