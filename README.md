@@ -80,8 +80,8 @@ The `run(startWorker, options)` function accepts the following options:
 | -------------------- | ------------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `enabled`            | `boolean`          | `true`                             | Whether to enable clustering. If `false`, runs `startWorker` directly in the main process.        |
 | `mode`               | `"smart" \| "max"` | `"smart"`                          | `"smart"` enables auto-scaling based on load. `"max"` spawns `maxWorkers` and keeps them running. |
-| `minWorkers`         | `number`           | `2`                                | Minimum number of workers to keep alive in "smart" mode.                                          |
-| `maxWorkers`         | `number`           | `os.cpus()`                        | Maximum number of workers to spawn.                                                               |
+| `minWorkers`         | `number`           | `Math.min(2, os.availableParallelism())` | Minimum number of workers to keep alive in "smart" mode.                                   |
+| `maxWorkers`         | `number`           | `os.availableParallelism()`        | Maximum number of workers to spawn.                                                               |
 | `scaleUpThreshold`   | `number`           | `50`                               | Event loop lag (ms) threshold to trigger scaling up.                                              |
 | `scaleDownThreshold` | `number`           | `10`                               | Event loop lag (ms) threshold to trigger scaling down.                                            |
 | `scalingCooldown`    | `number`           | `10000`                            | Minimum time (ms) between scaling actions.                                                        |

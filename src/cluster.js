@@ -40,8 +40,8 @@ import os from "node:os";
  * @param {function} startWorker - The function to execute when a worker process starts.
  * @param {object|boolean} options - Configuration object or boolean to enable/disable.
  * @param {boolean} [options.enabled=true] - Whether clustering is enabled.
- * @param {number} [options.minWorkers=2] - Minimum number of workers (smart mode).
- * @param {number} [options.maxWorkers=os.cpus()] - Maximum number of workers.
+ * @param {number} [options.minWorkers=Math.min(2, os.availableParallelism())] - Minimum number of workers (smart mode).
+ * @param {number} [options.maxWorkers=os.availableParallelism()] - Maximum number of workers.
  * @param {number} [options.scaleUpThreshold=50] - Event loop lag (ms) threshold to scale up.
  * @param {number} [options.scaleDownThreshold=10] - Event loop lag (ms) threshold to scale down.
  * @param {string} [options.mode="smart"] - "smart" (auto-scaling) or "max" (all cores).
@@ -451,7 +451,7 @@ export function run(startWorker, options = true, log = console) {
                     lag: stats.lag,
                     memory: stats.memory,
                     lastSeen: stats.lastSeen,
-                    uptime: worker && Date.now() - stats.lastSeen,
+                    uptime: worker ? Date.now() - stats.lastSeen : undefined,
                 });
             }
 

@@ -92,11 +92,12 @@ export interface ClusterOptions {
  * Metrics for a single worker.
  */
 export interface WorkerMetrics {
-    id: string;
+    id: number;
     pid?: number;
     lag: number;
-    memory?: any;
+    memory?: number;
     lastSeen: number;
+    uptime?: number;
 }
 
 /**
@@ -111,7 +112,7 @@ export interface ClusterMetrics {
     minWorkers: number;
     scaleUpThreshold: number;
     scaleDownThreshold: number;
-    mode: string;
+    mode: "smart" | "max";
 }
 
 /**
