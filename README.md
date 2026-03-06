@@ -66,7 +66,7 @@ You can reload the cluster (e.g. after a code deployment) without dropping conne
 1. Sequentially start a new worker.
 2. Wait for it to come online, and if the old worker was serving traffic, wait for the replacement
    to become listening.
-3. Gracefully shutdown the old worker.
+3. Gracefully shut down the old worker.
 
 ```js
 await control.reload();
@@ -89,7 +89,7 @@ The `run(startWorker, options)` function accepts the following options:
 | `scaleDownGrace`         | `number`           | `30000`                                  | Grace period (ms) after scaling up before scaling down is allowed.                                |
 | `autoScaleInterval`      | `number`           | `5000`                                   | Interval (ms) for auto-scaling checks in "smart" mode.                                            |
 | `shutdownSignals`        | `string[]`         | `['SIGINT', 'SIGTERM', 'SIGQUIT']`       | Signals to listen for to trigger graceful shutdown.                                               |
-| `shutdownTimeout`        | `number`           | `10000`                                  | Time (ms) to wait for workers to shutdown before forced exit.                                     |
+| `shutdownTimeout`        | `number`           | `10000`                                  | Time (ms) to wait for workers to shut down before forced exit.                                    |
 | `reloadOnlineTimeout`    | `number`           | `10000`                                  | Max time (ms) to wait for replacement worker `online` during reload.                              |
 | `reloadListeningTimeout` | `number`           | `10000`                                  | Max time (ms) to wait for replacement worker `listening` when replacing a listening worker.       |
 | `reloadDisconnectWait`   | `number`           | `2000`                                   | Max time (ms) to wait for an old worker to disconnect during each reload step.                    |
@@ -141,7 +141,7 @@ down when quiet), `@ynode/autoshutdown` manages the **lifecycle of individual wo
 their specific inactivity.
 
 - **@ynode/cluster**: "We are overloaded, add more workers!" or "We are effectively idle, remove the
-  extra workers."3
+  extra workers."
 - **@ynode/autoshutdown**: "I haven't received a request in 10 minutes, I should shut down to save
   memory."
 
