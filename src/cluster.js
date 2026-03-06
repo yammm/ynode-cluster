@@ -134,8 +134,14 @@ export function run(startWorker, options = true, log = console) {
     }
 
     const workerLoads = new Map();
+    const workerStartTimes = new Map();
     const workersWithErrorHandler = new WeakSet();
     let lastScalingAction = Date.now();
+    let consecutiveCrashRestarts = 0;
+
+    const restartBackoffBaseMs = 100;
+    const restartBackoffMaxMs = 5000;
+    const restartBackoffResetUptimeMs = 30000;
 
     function attachWorkerErrorHandler(worker) {
         if (!worker || workersWithErrorHandler.has(worker)) {
@@ -180,6 +186,7 @@ export function run(startWorker, options = true, log = console) {
         log.info("Worker %o is online", worker.process.pid);
         broadcastWorkerCount();
 
+        workerStartTimes.set(worker.id, Date.now());
         workerLoads.set(worker.id, { lag: 0, lastSeen: Date.now() });
 
         worker.on("message", (msg) => {
@@ -195,6 +202,8 @@ export function run(startWorker, options = true, log = console) {
     });
 
     cluster.on("exit", (worker, code, signal) => {
+        const workerStartTime = workerStartTimes.get(worker.id);
+        workerStartTimes.delete(worker.id);
         workerLoads.delete(worker.id);
         const currentWorkers = Object.keys(cluster.workers).length;
 
@@ -216,15 +225,38 @@ export function run(startWorker, options = true, log = console) {
             );
         }
 
-        log.warn(
-            `Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] died. Code: ${code}, Signal: ${signal}. Restarting...`,
-        );
-        try {
-            cluster.fork();
-        } catch (err) {
-            log.error("Failed to restart worker:", err);
+        const workerUptimeMs = workerStartTime ? Date.now() - workerStartTime : 0;
+        if (workerUptimeMs >= restartBackoffResetUptimeMs) {
+            consecutiveCrashRestarts = 0;
         }
-        broadcastWorkerCount();
+
+        consecutiveCrashRestarts += 1;
+        const backoffExponent = Math.min(Math.max(0, consecutiveCrashRestarts - 1), 16);
+        const restartDelay = Math.min(
+            restartBackoffBaseMs * 2 ** backoffExponent,
+            restartBackoffMaxMs,
+        );
+
+        log.warn(
+            `Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] died. Code: ${code}, Signal: ${signal}. Restarting in ${restartDelay}ms...`,
+        );
+        const restartTimer = setTimeout(() => {
+            if (isShuttingDown) {
+                return;
+            }
+
+            try {
+                cluster.fork();
+            } catch (err) {
+                log.error("Failed to restart worker:", err);
+            }
+            broadcastWorkerCount();
+        }, restartDelay);
+
+        // Keep the process alive if all workers are down so delayed restart can happen.
+        if (currentWorkers > 0) {
+            restartTimer.unref();
+        }
     });
 
     cluster.on("listening", (worker, address) => {
