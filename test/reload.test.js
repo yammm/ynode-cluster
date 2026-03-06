@@ -10,7 +10,7 @@ describe("Cluster Reload", () => {
         await new Promise((resolve, reject) => {
             const child = spawn("node", [scriptPath], {
                 stdio: "pipe",
-                env: { ...process.env }
+                env: { ...process.env },
             });
 
             let output = "";
@@ -61,7 +61,7 @@ describe("Cluster Reload", () => {
                 }
             });
 
-            child.stderr.on("data", d => console.error(d.toString()));
+            child.stderr.on("data", (d) => console.error(d.toString()));
 
             setTimeout(() => {
                 child.kill("SIGKILL");

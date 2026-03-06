@@ -9,7 +9,7 @@ describe("Cluster Shutdown", () => {
         await new Promise((resolve, reject) => {
             const child = spawn("node", [scriptPath], {
                 stdio: "pipe",
-                env: { ...process.env }
+                env: { ...process.env },
             });
 
             let output = "";
@@ -31,7 +31,7 @@ describe("Cluster Shutdown", () => {
                 }
             });
 
-            child.stderr.on("data", d => console.error(d.toString()));
+            child.stderr.on("data", (d) => console.error(d.toString()));
 
             child.on("close", (code) => {
                 try {
@@ -39,11 +39,11 @@ describe("Cluster Shutdown", () => {
                     // assert.match(output, /Master received SIGTERM/);
                     // assert.match(output, /shutting down workers/);
 
-                    // If the bug exists, workers might NOT log "received shutdown message" 
+                    // If the bug exists, workers might NOT log "received shutdown message"
                     // unless we implemented the listener (which I did in fixture).
                     // But effectively, master should force exit after 2s if workers don't exit.
 
-                    // We want to see if they exit BEFORE the timeout (graceful) 
+                    // We want to see if they exit BEFORE the timeout (graceful)
                     // or ONLY at timeout (force).
 
                     if (output.includes("Master force exiting")) {

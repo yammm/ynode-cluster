@@ -13,7 +13,7 @@ describe("Memory Scaling", () => {
         await new Promise((resolve, reject) => {
             const child = spawn("node", [scriptPath], {
                 stdio: ["pipe", "pipe", "pipe", "ipc"], // Enable IPC for messages if needed, though we rely on stdout
-                env: { ...process.env }
+                env: { ...process.env },
             });
 
             let output = "";
@@ -28,7 +28,7 @@ describe("Memory Scaling", () => {
                 // Remove escape sequences
                 const cleanStr = str.replace(sanitize, "");
 
-                // Need to find port to trigger leak. 
+                // Need to find port to trigger leak.
                 // The wrapper logs "connected to ... :port"
                 const match = cleanStr.match(/connected to .*?:(\d+)/);
                 if (match && !port) {
@@ -36,7 +36,7 @@ describe("Memory Scaling", () => {
                     // Trigger leak
                     setTimeout(() => {
                         http.get(`http://localhost:${port}/leak`, (res) => {
-                            // Keep triggering until it dies? 
+                            // Keep triggering until it dies?
                             // One request might be enough if leak is big
                         });
                     }, 1000);
@@ -59,7 +59,7 @@ describe("Memory Scaling", () => {
                 }
             });
 
-            child.stderr.on("data", d => console.error(d.toString()));
+            child.stderr.on("data", (d) => console.error(d.toString()));
 
             const checkInterval = setInterval(() => {
                 if (restarted) {

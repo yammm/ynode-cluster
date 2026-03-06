@@ -10,7 +10,7 @@ describe("No Restart Option", () => {
         await new Promise((resolve, reject) => {
             const child = spawn("node", [scriptPath], {
                 stdio: "pipe",
-                env: { ...process.env }
+                env: { ...process.env },
             });
 
             let output = "";
@@ -30,7 +30,7 @@ describe("No Restart Option", () => {
 
             child.on("close", (code) => {
                 try {
-                    // With norestart: true, the worker dies, master logs it and should eventually exit 
+                    // With norestart: true, the worker dies, master logs it and should eventually exit
                     // (immediately if no other handles, or we might need to kill it if it hangs).
                     // BUT effectively we want to ensure it didn't restart.
                     // So workerStarts should be 1.

@@ -10,7 +10,7 @@ describe("Metrics API", () => {
         await new Promise((resolve, reject) => {
             const child = spawn("node", [scriptPath], {
                 stdio: "pipe",
-                env: { ...process.env }
+                env: { ...process.env },
             });
 
             let output = "";
@@ -27,14 +27,18 @@ describe("Metrics API", () => {
             setTimeout(() => {
                 if (!resolved) {
                     cleanup();
-                    reject(new Error(`Timeout waiting for metrics output. Captured output:\n${output}`));
+                    reject(
+                        new Error(
+                            `Timeout waiting for metrics output. Captured output:\n${output}`,
+                        ),
+                    );
                 }
             }, 10000).unref();
 
             child.stdout.on("data", (data) => {
                 output += data.toString();
                 if (output.includes("METRICS_JSON:")) {
-                    const line = output.split("\n").find(l => l.includes("METRICS_JSON:"));
+                    const line = output.split("\n").find((l) => l.includes("METRICS_JSON:"));
                     if (line) {
                         try {
                             const json = JSON.parse(line.split("METRICS_JSON:")[1]);

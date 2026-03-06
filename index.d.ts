@@ -127,7 +127,7 @@ export interface ClusterManager {
 
 /**
  * Manages the application's clustering.
- * 
+ *
  * @param startWorker - The function to execute when a worker process starts.
  * @param options - Configuration object or boolean to enable/disable.
  * @param log - Optional logger instance (defaults to console).
@@ -136,5 +136,5 @@ export interface ClusterManager {
 export function run(
     startWorker: () => void | Promise<void>,
     options?: ClusterOptions | boolean,
-    log?: Console | any
+    log?: Console | any,
 ): ClusterManager | void;

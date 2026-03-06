@@ -78,7 +78,7 @@ export function run(startWorker, options = true, log = console) {
                     worker.send({
                         cmd: "heartbeat",
                         lag: Math.max(0, lag),
-                        memory: memory.heapUsed // Use heapUsed for primary scaling/monitoring
+                        memory: memory.heapUsed, // Use heapUsed for primary scaling/monitoring
                     });
                 } catch (err) {
                     // Ignore, channel probably closed
@@ -107,11 +107,15 @@ export function run(startWorker, options = true, log = console) {
     } = typeof options === "object" ? options : {};
 
     if (minWorkers > maxWorkers) {
-        throw new Error(`Invalid configuration: minWorkers (${minWorkers}) cannot be greater than maxWorkers (${maxWorkers})`);
+        throw new Error(
+            `Invalid configuration: minWorkers (${minWorkers}) cannot be greater than maxWorkers (${maxWorkers})`,
+        );
     }
 
     if (scaleUpThreshold <= scaleDownThreshold) {
-        throw new Error(`Invalid configuration: scaleUpThreshold (${scaleUpThreshold}) must be greater than scaleDownThreshold (${scaleDownThreshold})`);
+        throw new Error(
+            `Invalid configuration: scaleUpThreshold (${scaleUpThreshold}) must be greater than scaleDownThreshold (${scaleDownThreshold})`,
+        );
     }
 
     const initialWorkers = mode === "max" ? maxWorkers : minWorkers;
@@ -158,7 +162,7 @@ export function run(startWorker, options = true, log = console) {
                 workerLoads.set(worker.id, {
                     lag: msg.lag,
                     lastSeen: Date.now(),
-                    memory: msg.memory
+                    memory: msg.memory,
                 });
             }
         });
@@ -169,18 +173,26 @@ export function run(startWorker, options = true, log = console) {
         const currentWorkers = Object.keys(cluster.workers).length;
 
         if (worker.exitedAfterDisconnect) {
-            return log.info(`Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] disconnected voluntarily.`);
+            return log.info(
+                `Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] disconnected voluntarily.`,
+            );
         }
 
         if (isShuttingDown) {
-            return log.info(`Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] died. Code: ${code}, Signal: ${signal}.`);
+            return log.info(
+                `Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] died. Code: ${code}, Signal: ${signal}.`,
+            );
         }
 
         if (norestart) {
-            return log.warn(`Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] died. Code: ${code}, Signal: ${signal}. Not restarting (norestart enabled).`);
+            return log.warn(
+                `Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] died. Code: ${code}, Signal: ${signal}. Not restarting (norestart enabled).`,
+            );
         }
 
-        log.warn(`Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] died. Code: ${code}, Signal: ${signal}. Restarting...`);
+        log.warn(
+            `Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] died. Code: ${code}, Signal: ${signal}. Restarting...`,
+        );
         try {
             cluster.fork();
         } catch (err) {
@@ -191,7 +203,9 @@ export function run(startWorker, options = true, log = console) {
 
     cluster.on("listening", (worker, address) => {
         const currentWorkers = Object.keys(cluster.workers).length;
-        log.info(`A worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] is now connected to ${address.address}:${address.port}`);
+        log.info(
+            `A worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] is now connected to ${address.address}:${address.port}`,
+        );
         broadcastWorkerCount();
     });
 
@@ -225,7 +239,7 @@ export function run(startWorker, options = true, log = console) {
                     totalMemory += stats.memory;
                 }
             }
-            const avgMemoryMB = count > 0 ? (totalMemory / count) / 1024 / 1024 : 0;
+            const avgMemoryMB = count > 0 ? totalMemory / count / 1024 / 1024 : 0;
 
             const currentWorkers = Object.keys(cluster.workers).length;
 
@@ -235,7 +249,9 @@ export function run(startWorker, options = true, log = console) {
                     const memMB = stats.memory / 1024 / 1024;
                     // console.log(`[Master] Checking Worker ${id} Memory: ${memMB.toFixed(2)}MB (Limit: ${maxWorkerMemory}MB)`);
                     if (memMB > maxWorkerMemory) {
-                        log.warn(`Worker ${id} exceeded memory limit (${memMB.toFixed(2)}MB > ${maxWorkerMemory}MB). Restarting...`);
+                        log.warn(
+                            `Worker ${id} exceeded memory limit (${memMB.toFixed(2)}MB > ${maxWorkerMemory}MB). Restarting...`,
+                        );
                         const worker = cluster.workers[id];
                         if (worker) {
                             worker.kill();
@@ -331,11 +347,11 @@ export function run(startWorker, options = true, log = console) {
                     lag: stats.lag,
                     memory: stats.memory,
                     lastSeen: stats.lastSeen,
-                    upltime: worker && (Date.now() - stats.lastSeen)
+                    uptime: worker && Date.now() - stats.lastSeen,
                 });
             }
 
-            const avgLag = count > 0 ? (totalLag / count) : 0;
+            const avgLag = count > 0 ? totalLag / count : 0;
 
             return {
                 workers: workersData,
@@ -346,7 +362,7 @@ export function run(startWorker, options = true, log = console) {
                 minWorkers,
                 scaleUpThreshold,
                 scaleDownThreshold,
-                mode
+                mode,
             };
         },
         reload: async () => {
@@ -374,26 +390,30 @@ export function run(startWorker, options = true, log = console) {
 
                 // Wait for the new worker to be listening (optional, but safer for zero-downtime)
                 // However, not all workers listen. strict zero-downtime usually implies listening.
-                // We'll stick to 'online' for generic support in v1, 
+                // We'll stick to 'online' for generic support in v1,
                 // but maybe add a small delay or check?
                 // For now, 'online' means the process is up and running.
 
-                log.info(`Replacement worker ${newWorker.process.pid} is online. Gracefully shutting down old worker ${oldWorker.process.pid}...`);
+                log.info(
+                    `Replacement worker ${newWorker.process.pid} is online. Gracefully shutting down old worker ${oldWorker.process.pid}...`,
+                );
 
                 // Gracefully disconnect the old worker
                 oldWorker.disconnect();
 
                 // We don't strictly wait for the old worker to die here to speed up deployment,
-                // but it handles its own shutdown. 
+                // but it handles its own shutdown.
                 // If we wanted strict serial replacement (one dies, then next starts), we'd wait.
                 // But typically we want overlap.
 
                 // Wait for disconnect confirmation or short timeout to proceed to next
-                const disconnectPromise = new Promise(resolve => oldWorker.once("disconnect", resolve));
-                const timeoutPromise = new Promise(resolve => setTimeout(resolve, 2000).unref());
+                const disconnectPromise = new Promise((resolve) =>
+                    oldWorker.once("disconnect", resolve),
+                );
+                const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 2000).unref());
                 await Promise.race([disconnectPromise, timeoutPromise]);
             }
             log.info("Cluster reload complete.");
-        }
+        },
     };
 }

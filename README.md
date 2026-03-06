@@ -7,7 +7,9 @@ Copyright (c) 2025 Michael Welter <me@mikinho.com>
 
 **Smart & Easy Node.js Clustering.**
 
-`@ynode/cluster` removes the complexity of managing Node.js cluster processes. It provides out-of-the-box support for:
+`@ynode/cluster` removes the complexity of managing Node.js cluster processes. It provides
+out-of-the-box support for:
+
 - **Smart Auto-Scaling**: Automatically spawns and kills workers based on Event Loop Lag (CPU load).
 - **Resiliency**: Automatically restarts workers if they crash.
 - **Zero-Config Defaults**: Works immediately with sensible defaults, but fully configurable.
@@ -44,7 +46,7 @@ const startServer = async () => {
 const control = run(startServer, {
     mode: "smart",
     minWorkers: 2,
-    maxWorkers: 4
+    maxWorkers: 4,
 });
 
 // Access metrics
@@ -58,7 +60,9 @@ setInterval(() => {
 
 ### Zero-Downtime Reload
 
-You can reload the cluster (e.g. after a code deployment) without dropping connections using `control.reload()`. This will:
+You can reload the cluster (e.g. after a code deployment) without dropping connections using
+`control.reload()`. This will:
+
 1. Sequentially start a new worker.
 2. Wait for it to come online.
 3. Gracefully shutdown the old worker.
@@ -72,30 +76,31 @@ console.log("Reload complete!");
 
 The `run(startWorker, options)` function accepts the following options:
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `enabled` | `boolean` | `true` | Whether to enable clustering. If `false`, runs `startWorker` directly in the main process. |
-| `mode` | `"smart" \| "max"` | `"smart"` | `"smart"` enables auto-scaling based on load. `"max"` spawns `maxWorkers` and keeps them running. |
-| `minWorkers` | `number` | `2` | Minimum number of workers to keep alive in "smart" mode. |
-| `maxWorkers` | `number` | `os.cpus()` | Maximum number of workers to spawn. |
-| `scaleUpThreshold` | `number` | `50` | Event loop lag (ms) threshold to trigger scaling up. |
-| `scaleDownThreshold` | `number` | `10` | Event loop lag (ms) threshold to trigger scaling down. |
-| `scalingCooldown` | `number` | `10000` | Minimum time (ms) between scaling actions. |
-| `scaleDownGrace` | `number` | `30000` | Grace period (ms) after scaling up before scaling down is allowed. |
-| `autoScaleInterval` | `number` | `5000` | Interval (ms) for auto-scaling checks in "smart" mode. |
-| `shutdownSignals` | `string[]` | `['SIGINT', 'SIGTERM', 'SIGQUIT']` | Signals to listen for to trigger graceful shutdown. |
-| `shutdownTimeout` | `number` | `10000` | Time (ms) to wait for workers to shutdown before forced exit. |
-| `scaleUpMemory` | `number` | `0` | Threshold (MB) for average heap usage to trigger scaling up. |
-| `maxWorkerMemory` | `number` | `0` | Max heap usage (MB) for a worker before restart (Leak Protection). |
-| `norestart` | `boolean` | `false` | If true, workers will not be restarted when they die. |
- 
+| Option               | Type               | Default                            | Description                                                                                       |
+| -------------------- | ------------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `enabled`            | `boolean`          | `true`                             | Whether to enable clustering. If `false`, runs `startWorker` directly in the main process.        |
+| `mode`               | `"smart" \| "max"` | `"smart"`                          | `"smart"` enables auto-scaling based on load. `"max"` spawns `maxWorkers` and keeps them running. |
+| `minWorkers`         | `number`           | `2`                                | Minimum number of workers to keep alive in "smart" mode.                                          |
+| `maxWorkers`         | `number`           | `os.cpus()`                        | Maximum number of workers to spawn.                                                               |
+| `scaleUpThreshold`   | `number`           | `50`                               | Event loop lag (ms) threshold to trigger scaling up.                                              |
+| `scaleDownThreshold` | `number`           | `10`                               | Event loop lag (ms) threshold to trigger scaling down.                                            |
+| `scalingCooldown`    | `number`           | `10000`                            | Minimum time (ms) between scaling actions.                                                        |
+| `scaleDownGrace`     | `number`           | `30000`                            | Grace period (ms) after scaling up before scaling down is allowed.                                |
+| `autoScaleInterval`  | `number`           | `5000`                             | Interval (ms) for auto-scaling checks in "smart" mode.                                            |
+| `shutdownSignals`    | `string[]`         | `['SIGINT', 'SIGTERM', 'SIGQUIT']` | Signals to listen for to trigger graceful shutdown.                                               |
+| `shutdownTimeout`    | `number`           | `10000`                            | Time (ms) to wait for workers to shutdown before forced exit.                                     |
+| `scaleUpMemory`      | `number`           | `0`                                | Threshold (MB) for average heap usage to trigger scaling up.                                      |
+| `maxWorkerMemory`    | `number`           | `0`                                | Max heap usage (MB) for a worker before restart (Leak Protection).                                |
+| `norestart`          | `boolean`          | `false`                            | If true, workers will not be restarted when they die.                                             |
+
 ## Accessing Metrics
- 
-The `run()` function returns a `ClusterManager` instance (when in cluster mode) which exposes current metrics.
- 
+
+The `run()` function returns a `ClusterManager` instance (when in cluster mode) which exposes
+current metrics.
+
 ```javascript
 const manager = run(startWorker, { mode: "smart" });
- 
+
 // In your monitoring loop or API endpoint:
 if (manager) {
     const metrics = manager.getMetrics();
@@ -106,14 +111,20 @@ if (manager) {
 
 ## Working with @ynode/autoshutdown
 
-This package works seamlessly with **[@ynode/autoshutdown](https://www.npmjs.com/package/@ynode/autoshutdown)**.
+This package works seamlessly with
+**[@ynode/autoshutdown](https://www.npmjs.com/package/@ynode/autoshutdown)**.
 
-While `@ynode/cluster` manages the **pool size** based on overall system load (scaling up when busy, down when quiet), `@ynode/autoshutdown` manages the **lifecycle of individual workers** based on their specific inactivity.
+While `@ynode/cluster` manages the **pool size** based on overall system load (scaling up when busy,
+down when quiet), `@ynode/autoshutdown` manages the **lifecycle of individual workers** based on
+their specific inactivity.
 
-- **@ynode/cluster**: "We are overloaded, add more workers!" or "We are effectively idle, remove the extra workers."3
-- **@ynode/autoshutdown**: "I haven't received a request in 10 minutes, I should shut down to save memory."
+- **@ynode/cluster**: "We are overloaded, add more workers!" or "We are effectively idle, remove the
+  extra workers."3
+- **@ynode/autoshutdown**: "I haven't received a request in 10 minutes, I should shut down to save
+  memory."
 
-Using them together ensures optimal resource usage: responsive scaling for traffic spikes and aggressive cleanup for idle periods.
+Using them together ensures optimal resource usage: responsive scaling for traffic spikes and
+aggressive cleanup for idle periods.
 
 ```javascript
 import { run } from "@ynode/cluster";

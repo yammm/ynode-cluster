@@ -10,7 +10,7 @@ describe("Cluster Integration", () => {
         await new Promise((resolve, reject) => {
             const child = spawn("node", [scriptPath], {
                 stdio: "pipe",
-                env: { ...process.env }
+                env: { ...process.env },
             });
 
             let output = "";
@@ -35,7 +35,7 @@ describe("Cluster Integration", () => {
             const timeout = setTimeout(() => {
                 if (resolved) {
                     return;
-                };
+                }
                 cleanup();
                 reject(new Error("Test timed out waiting for output. Output:\n" + output));
             }, 10000).unref();
@@ -51,10 +51,7 @@ describe("Cluster Integration", () => {
                 }
 
                 // Check for expected output
-                if (!resolved &&
-                    output.includes("Shogun is the master!") &&
-                    workerCount >= 2) {
-
+                if (!resolved && output.includes("Shogun is the master!") && workerCount >= 2) {
                     resolved = true;
                     cleanup();
                     resolve();
@@ -64,7 +61,7 @@ describe("Cluster Integration", () => {
             child.on("close", (code) => {
                 if (resolved) {
                     return;
-                };
+                }
 
                 // If closed unexpectedly
                 cleanup();
@@ -77,7 +74,11 @@ describe("Cluster Integration", () => {
                     resolved = true;
                     resolve();
                 } catch (err) {
-                    reject(new Error(`Child exited early. code=${code}\n${err.message}\nOutput:\n${output}`));
+                    reject(
+                        new Error(
+                            `Child exited early. code=${code}\n${err.message}\nOutput:\n${output}`,
+                        ),
+                    );
                 }
             });
 
@@ -89,7 +90,6 @@ describe("Cluster Integration", () => {
                 reject(err);
             });
         });
-
     });
 });
 
@@ -99,7 +99,7 @@ it("should throw error on invalid configuration", async (t) => {
     await new Promise((resolve, reject) => {
         const child = spawn("node", [scriptPath], {
             stdio: "pipe",
-            env: { ...process.env }
+            env: { ...process.env },
         });
 
         let stderr = "";
