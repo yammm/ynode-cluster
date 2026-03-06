@@ -160,6 +160,12 @@ function validateClusterConfig(config) {
         );
     }
 
+    if (config.autoScaleInterval <= 0) {
+        throw new Error(
+            `Invalid configuration: autoScaleInterval (${config.autoScaleInterval}) must be greater than 0`,
+        );
+    }
+
     if (config.minWorkers > config.maxWorkers) {
         throw new Error(
             `Invalid configuration: minWorkers (${config.minWorkers}) cannot be greater than maxWorkers (${config.maxWorkers})`,

@@ -508,6 +508,41 @@ it("should throw error on negative scaleUpMemory", async () => {
     });
 });
 
+it("should throw error on non-positive autoScaleInterval", async () => {
+    const scriptPath = join(
+        process.cwd(),
+        "test",
+        "fixtures",
+        "invalid_zero_auto_scale_interval_app.js",
+    );
+
+    await new Promise((resolve, reject) => {
+        const child = spawn("node", [scriptPath], {
+            stdio: "pipe",
+            env: { ...process.env },
+        });
+
+        let stderr = "";
+
+        child.stderr.on("data", (data) => {
+            stderr += data.toString();
+        });
+
+        child.on("close", (code) => {
+            try {
+                assert.notEqual(code, 0, "Process should exit with error code");
+                assert.match(
+                    stderr,
+                    /Invalid configuration: autoScaleInterval \(0\) must be greater than 0/,
+                );
+                resolve();
+            } catch (err) {
+                reject(err);
+            }
+        });
+    });
+});
+
 it("should throw error on invalid mode", async () => {
     const scriptPath = join(process.cwd(), "test", "fixtures", "invalid_mode_app.js");
 
