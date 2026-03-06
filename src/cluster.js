@@ -53,6 +53,14 @@ const NUMERIC_CONFIG_KEYS = [
     "reloadListeningTimeout",
     "reloadDisconnectWait",
 ];
+const NON_NEGATIVE_NUMERIC_CONFIG_KEYS = [
+    "scalingCooldown",
+    "scaleDownGrace",
+    "autoScaleInterval",
+    "shutdownTimeout",
+    "scaleUpMemory",
+    "maxWorkerMemory",
+];
 
 function isOptionsObject(options) {
     return options !== null && typeof options === "object" && !Array.isArray(options);
@@ -114,8 +122,18 @@ function validateFiniteNumericConfig(config) {
     }
 }
 
+function validateNonNegativeNumericConfig(config) {
+    for (const key of NON_NEGATIVE_NUMERIC_CONFIG_KEYS) {
+        const value = config[key];
+        if (value < 0) {
+            throw new Error(`Invalid configuration: ${key} (${value}) must be >= 0`);
+        }
+    }
+}
+
 function validateClusterConfig(config) {
     validateFiniteNumericConfig(config);
+    validateNonNegativeNumericConfig(config);
 
     if (typeof config.norestart !== "boolean") {
         throw new Error(`Invalid configuration: norestart (${config.norestart}) must be a boolean`);
