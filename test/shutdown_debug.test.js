@@ -1,9 +1,10 @@
 import { describe, it } from "node:test";
 import { spawn } from "node:child_process";
+import { strict as assert } from "node:assert";
 import { join } from "node:path";
 
 describe("Cluster Shutdown", () => {
-    it("should shut down workers gracefully on SIGTERM", async (t) => {
+    it("should shut down workers gracefully on SIGTERM", async () => {
         const scriptPath = join(process.cwd(), "test", "fixtures", "shutdown_app.js");
 
         await new Promise((resolve, reject) => {
@@ -14,44 +15,47 @@ describe("Cluster Shutdown", () => {
 
             let output = "";
             let workersOnline = 0;
+            let signalSent = false;
+            let settled = false;
 
             child.stdout.on("data", (data) => {
                 const str = data.toString();
                 output += str;
-                // console.log(str);
 
-                if (str.includes("is online")) {
-                    workersOnline++;
-                    if (workersOnline === 2) {
-                        // Send SIGTERM to master
-                        setTimeout(() => {
-                            child.kill("SIGTERM");
-                        }, 500);
-                    }
+                const onlineMatches = str.match(/Worker .*?\d+.*? is online/g);
+                if (onlineMatches) {
+                    workersOnline += onlineMatches.length;
+                }
+                if (!signalSent && workersOnline >= 2) {
+                    signalSent = true;
+                    setTimeout(() => {
+                        child.kill("SIGTERM");
+                    }, 200).unref();
                 }
             });
 
-            child.stderr.on("data", (d) => console.error(d.toString()));
+            child.stderr.on("data", (d) => {
+                output += d.toString();
+            });
 
             child.on("close", (code) => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                clearTimeout(timeout);
+
                 try {
-                    // Check if workers received shutdown message or disconnected
-                    // assert.match(output, /Master received SIGTERM/);
-                    // assert.match(output, /shutting down workers/);
+                    assert.match(output, /Master received SIGTERM, shutting down workers/);
+                    assert.doesNotMatch(output, /Master force exiting/);
+                    assert.doesNotMatch(output, /Restarting in \d+ms/);
 
-                    // If the bug exists, workers might NOT log "received shutdown message"
-                    // unless we implemented the listener (which I did in fixture).
-                    // But effectively, master should force exit after 2s if workers don't exit.
-
-                    // We want to see if they exit BEFORE the timeout (graceful)
-                    // or ONLY at timeout (force).
-
-                    if (output.includes("Master force exiting")) {
-                        // This means they didn't exit on their own.
-                        console.log("Verdict: Master forced exit.");
-                    } else {
-                        console.log("Verdict: Clean exit.");
-                    }
+                    const shutdownMessages = output.match(/received shutdown message/g) ?? [];
+                    assert.ok(
+                        shutdownMessages.length >= 1,
+                        `Expected at least one worker to receive shutdown message.\nOutput:\n${output}`,
+                    );
+                    assert.notEqual(code, null, `Expected process to exit normally.\nOutput:\n${output}`);
 
                     resolve();
                 } catch (err) {
@@ -59,10 +63,14 @@ describe("Cluster Shutdown", () => {
                 }
             });
 
-            setTimeout(() => {
+            const timeout = setTimeout(() => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
                 child.kill("SIGKILL");
                 reject(new Error("Timeout. Output:\n" + output));
-            }, 5000);
+            }, 5000).unref();
         });
     });
 });

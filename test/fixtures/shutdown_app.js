@@ -1,17 +1,22 @@
 import { run } from "../../src/cluster.js";
-import http from "node:http";
 
 run(
     () => {
-        http.createServer((req, res) => {
-            res.end("ok");
-        }).listen(0);
+        // Keep the worker alive until shutdown is requested.
+        const keepAlive = setInterval(() => {}, 1000);
 
         // Log if we receive the shutdown message
         process.on("message", (msg) => {
             if (msg === "shutdown") {
                 console.log(`Worker ${process.pid} received shutdown message`);
+                clearInterval(keepAlive);
+                setTimeout(() => process.exit(0), 20).unref();
             }
+        });
+
+        process.on("disconnect", () => {
+            clearInterval(keepAlive);
+            process.exit(0);
         });
 
         // Log exit
