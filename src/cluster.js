@@ -299,8 +299,8 @@ function validateClusterConfig(config) {
  * @param {boolean} [options.tty.enabled=false] - Enable TTY mode in master process.
  * @param {boolean} [options.tty.commands=true] - Enable line-based command handling when TTY mode is enabled.
  * @param {string} [options.tty.reloadCommand="rl"] - Command that triggers a cluster reload.
- * @param {import("node:stream").Readable} [options.tty.stdin=process.stdin] - Input stream used for command mode.
- * @param {import("node:stream").Writable} [options.tty.stdout=process.stdout] - Output stream used for command mode.
+ * @param {stream.Readable} [options.tty.stdin=process.stdin] - Input stream used for command mode.
+ * @param {stream.Writable} [options.tty.stdout=process.stdout] - Output stream used for command mode.
  * @param {string} [options.tty.prompt] - Optional command prompt text.
  * @param {object} log - The logger instance.
  */
