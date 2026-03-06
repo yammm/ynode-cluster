@@ -24,88 +24,53 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
 /**
- * Generates a `yuidoc.json` configuration file dynamically from `package.json`
- * and runs YUIDoc to produce project documentation in the `docs/` directory.
- *
- * @module gen-docs
- * @main gen-docs
- * @version 1.0.0
- * @since 1.0.0
+ * Generates a JSDoc configuration file dynamically from `package.json`
+ * and runs JSDoc to produce project documentation in the `docs/` directory.
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import process from "node:process";
 
-/**
- * Resolve the path to `package.json` and import its contents.
- *
- * @property {string} pkgPath Absolute path to the local package.json file.
- * @property {Object} pkg Parsed package.json contents.
- */
-const pkgPath = resolve(process.cwd(), "package.json");
-const pkg = (await import(pkgPath, { with: { type: "json" } })).default;
-
-/**
- * Extracts metadata from the project's package.json for documentation generation.
- *
- * @property {string} name        Project name, defaults to "TODO: name".
- * @property {string} description Project description, defaults to "TODO: description".
- * @property {string} version     Project version string.
- * @property {string} url         Project homepage or empty string.
- */
-const name = pkg.name ?? "TODO: name";
-const description = pkg.description ?? "TODO: description";
-const version = pkg.version ?? "0.0.0";
-const url = (pkg.homepage ?? "").toString();
-
-/**
- * Ensures that the output directory for YUIDoc exists.
- *
- * @property {string} outdir Path to the documentation output directory.
- */
 const outdir = "docs";
 if (!existsSync(outdir)) {
     mkdirSync(outdir, { recursive: true });
 }
 
-/**
- * Build the YUIDoc configuration object from package.json metadata.
- *
- * @property {Object} yui
- * @property {Object} yui.options Paths, output, and generation options for YUIDoc.
- */
-const yui = {
-    name: name,
-    description: description,
-    version: version,
-    url: url,
-    options: {
-        paths: ["src"],
-        outdir: "docs",
-        exclude: ["node_modules", ".git"].join(","),
-        extensions: [".js"].join(","),
-        syntaxtype: "js",
-        quiet: true,
+const jsdocConfigPath = resolve(process.cwd(), ".jsdoc.generated.json");
+const jsdocConfig = {
+    source: {
+        include: ["src"],
+        includePattern: ".+\\.js$",
+        excludePattern: "(^|\\/|\\\\)(node_modules|docs|\\.git)(\\/|\\\\|$)",
     },
+    opts: {
+        destination: outdir,
+        recurse: true,
+        encoding: "utf8",
+        readme: "README.md",
+    },
+    templates: {
+        default: {
+            includeDate: false,
+        },
+    },
+    plugins: ["plugins/markdown"],
 };
+writeFileSync(jsdocConfigPath, JSON.stringify(jsdocConfig, null, 4) + "\n", "utf8");
 
-/**
- * Write the configuration to `yuidoc.json` at the project root.
- *
- * @property {string} yuiPath Full path to the generated YUIDoc configuration file.
- */
-const yuiPath = resolve(process.cwd(), "yuidoc.json");
-writeFileSync(yuiPath, JSON.stringify(yui, null, 4) + "\n", "utf8");
+try {
+    const jsdocBin = resolve(process.cwd(), "node_modules", "jsdoc", "jsdoc.js");
+    if (!existsSync(jsdocBin)) {
+        throw new Error(
+            "JSDoc binary not found at node_modules/jsdoc/jsdoc.js. Run `npm install` to install dev dependencies.",
+        );
+    }
 
-/**
- * Executes YUIDoc with the generated configuration.
- *
- * @method execFileSync
- * @param {string} "npx" - CLI command.
- * @param {Array<string>} ["-y", "yuidoc"] - Command arguments to invoke YUIDoc.
- * @param {Object} options - Subprocess options (inherit stdio for live output).
- * @return {void}
- */
-execFileSync("npx", ["-y", "yuidoc"], { stdio: "inherit" });
+    execFileSync(process.execPath, [jsdocBin, "-c", jsdocConfigPath], {
+        stdio: "inherit",
+    });
+} finally {
+    rmSync(jsdocConfigPath, { force: true });
+}

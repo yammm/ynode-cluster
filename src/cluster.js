@@ -26,10 +26,10 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 /**
  *  cluster.js: Process Manager or Cluster Orchestrator
  *
- * @module cluster
- *
  * Its sole responsibility is to handle the logic of creating, monitoring,
  * and restarting worker processes.
+ *
+ * @module cluster
  */
 
 import cluster from "node:cluster";
