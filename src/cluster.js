@@ -121,6 +121,15 @@ function validateClusterConfig(config) {
         throw new Error(`Invalid configuration: norestart (${config.norestart}) must be a boolean`);
     }
 
+    if (
+        !Array.isArray(config.shutdownSignals) ||
+        config.shutdownSignals.some((signal) => typeof signal !== "string" || signal.length === 0)
+    ) {
+        throw new Error(
+            `Invalid configuration: shutdownSignals (${config.shutdownSignals}) must be an array of non-empty strings`,
+        );
+    }
+
     if (config.minWorkers > config.maxWorkers) {
         throw new Error(
             `Invalid configuration: minWorkers (${config.minWorkers}) cannot be greater than maxWorkers (${config.maxWorkers})`,

@@ -344,6 +344,36 @@ it("should throw error on non-boolean norestart configuration", async () => {
     });
 });
 
+it("should throw error on invalid shutdownSignals configuration", async () => {
+    const scriptPath = join(process.cwd(), "test", "fixtures", "invalid_shutdown_signals_app.js");
+
+    await new Promise((resolve, reject) => {
+        const child = spawn("node", [scriptPath], {
+            stdio: "pipe",
+            env: { ...process.env },
+        });
+
+        let stderr = "";
+
+        child.stderr.on("data", (data) => {
+            stderr += data.toString();
+        });
+
+        child.on("close", (code) => {
+            try {
+                assert.notEqual(code, 0, "Process should exit with error code");
+                assert.match(
+                    stderr,
+                    /Invalid configuration: shutdownSignals \(SIGTERM\) must be an array of non-empty strings/,
+                );
+                resolve();
+            } catch (err) {
+                reject(err);
+            }
+        });
+    });
+});
+
 it("should throw error on invalid mode", async () => {
     const scriptPath = join(process.cwd(), "test", "fixtures", "invalid_mode_app.js");
 
