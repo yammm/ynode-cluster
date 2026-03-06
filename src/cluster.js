@@ -130,6 +130,18 @@ function validateClusterConfig(config) {
         );
     }
 
+    if (!Number.isInteger(config.minWorkers) || config.minWorkers < 1) {
+        throw new Error(
+            `Invalid configuration: minWorkers (${config.minWorkers}) must be an integer >= 1`,
+        );
+    }
+
+    if (!Number.isInteger(config.maxWorkers) || config.maxWorkers < 1) {
+        throw new Error(
+            `Invalid configuration: maxWorkers (${config.maxWorkers}) must be an integer >= 1`,
+        );
+    }
+
     if (config.minWorkers > config.maxWorkers) {
         throw new Error(
             `Invalid configuration: minWorkers (${config.minWorkers}) cannot be greater than maxWorkers (${config.maxWorkers})`,

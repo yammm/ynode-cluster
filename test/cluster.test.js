@@ -374,6 +374,76 @@ it("should throw error on invalid shutdownSignals configuration", async () => {
     });
 });
 
+it("should throw error when minWorkers is not an integer", async () => {
+    const scriptPath = join(
+        process.cwd(),
+        "test",
+        "fixtures",
+        "invalid_min_workers_integer_app.js",
+    );
+
+    await new Promise((resolve, reject) => {
+        const child = spawn("node", [scriptPath], {
+            stdio: "pipe",
+            env: { ...process.env },
+        });
+
+        let stderr = "";
+
+        child.stderr.on("data", (data) => {
+            stderr += data.toString();
+        });
+
+        child.on("close", (code) => {
+            try {
+                assert.notEqual(code, 0, "Process should exit with error code");
+                assert.match(
+                    stderr,
+                    /Invalid configuration: minWorkers \(1.5\) must be an integer >= 1/,
+                );
+                resolve();
+            } catch (err) {
+                reject(err);
+            }
+        });
+    });
+});
+
+it("should throw error when maxWorkers is less than 1", async () => {
+    const scriptPath = join(
+        process.cwd(),
+        "test",
+        "fixtures",
+        "invalid_max_workers_minimum_app.js",
+    );
+
+    await new Promise((resolve, reject) => {
+        const child = spawn("node", [scriptPath], {
+            stdio: "pipe",
+            env: { ...process.env },
+        });
+
+        let stderr = "";
+
+        child.stderr.on("data", (data) => {
+            stderr += data.toString();
+        });
+
+        child.on("close", (code) => {
+            try {
+                assert.notEqual(code, 0, "Process should exit with error code");
+                assert.match(
+                    stderr,
+                    /Invalid configuration: maxWorkers \(0\) must be an integer >= 1/,
+                );
+                resolve();
+            } catch (err) {
+                reject(err);
+            }
+        });
+    });
+});
+
 it("should throw error on invalid mode", async () => {
     const scriptPath = join(process.cwd(), "test", "fixtures", "invalid_mode_app.js");
 
