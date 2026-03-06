@@ -1,29 +1,23 @@
 import { describe, it } from "node:test";
-import { spawn } from "node:child_process";
-import { join } from "node:path";
 import http from "node:http";
+import { spawnFixture } from "./helpers/fixture-process.js";
 
 describe("Memory Scaling", () => {
     it("should restart worker on memory leak", async () => {
-        const scriptPath = join(process.cwd(), "test", "fixtures", "memory_app.js");
-
         // eslint-disable-next-line no-control-regex
         const sanitize = new RegExp("\\x1b\\[\\d+m", "g");
 
         await new Promise((resolve, reject) => {
-            const child = spawn("node", [scriptPath], {
+            const child = spawnFixture("memory_app.js", {
                 stdio: ["pipe", "pipe", "pipe", "ipc"], // Enable IPC for messages if needed, though we rely on stdout
-                env: { ...process.env },
             });
 
             let output = "";
             let port = 0;
             let initialPid = null;
-            let restarted = false;
             let settled = false;
 
             const cleanup = (signal = "SIGTERM") => {
-                clearInterval(checkInterval);
                 clearTimeout(timeout);
                 try {
                     child.kill(signal);
@@ -60,13 +54,10 @@ describe("Memory Scaling", () => {
                     if (!initialPid) {
                         initialPid = pid;
                     } else if (pid !== initialPid) {
-                        restarted = true;
+                        settled = true;
+                        cleanup("SIGTERM");
+                        resolve();
                     }
-                }
-
-                // Detection log
-                if (cleanStr.includes("exceeded memory limit")) {
-                    // Success!
                 }
             });
 
@@ -74,16 +65,27 @@ describe("Memory Scaling", () => {
                 output += data.toString();
             });
 
-            const checkInterval = setInterval(() => {
+            child.on("close", (code) => {
                 if (settled) {
                     return;
                 }
-                if (restarted) {
-                    settled = true;
-                    cleanup("SIGTERM");
-                    resolve();
+                settled = true;
+                clearTimeout(timeout);
+                reject(
+                    new Error(
+                        `Child exited before memory restart. code=${code}\nOutput:\n${output}`,
+                    ),
+                );
+            });
+
+            child.on("error", (err) => {
+                if (settled) {
+                    return;
                 }
-            }, 500).unref();
+                settled = true;
+                clearTimeout(timeout);
+                reject(err);
+            });
 
             const timeout = setTimeout(() => {
                 if (settled) {
