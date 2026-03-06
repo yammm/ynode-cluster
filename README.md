@@ -89,6 +89,9 @@ The `run(startWorker, options)` function accepts the following options:
 | `autoScaleInterval`  | `number`           | `5000`                             | Interval (ms) for auto-scaling checks in "smart" mode.                                            |
 | `shutdownSignals`    | `string[]`         | `['SIGINT', 'SIGTERM', 'SIGQUIT']` | Signals to listen for to trigger graceful shutdown.                                               |
 | `shutdownTimeout`    | `number`           | `10000`                            | Time (ms) to wait for workers to shutdown before forced exit.                                     |
+| `reloadOnlineTimeout` | `number`          | `10000`                            | Max time (ms) to wait for replacement worker `online` during reload.                              |
+| `reloadListeningTimeout` | `number`       | `10000`                            | Max time (ms) to wait for replacement worker `listening` when replacing a listening worker.       |
+| `reloadDisconnectWait` | `number`         | `2000`                             | Max time (ms) to wait for an old worker to disconnect during each reload step.                    |
 | `scaleUpMemory`      | `number`           | `0`                                | Threshold (MB) for average heap usage to trigger scaling up.                                      |
 | `maxWorkerMemory`    | `number`           | `0`                                | Max heap usage (MB) for a worker before restart (Leak Protection).                                |
 | `norestart`          | `boolean`          | `false`                            | If true, workers will not be restarted when they die.                                             |
@@ -108,6 +111,24 @@ if (manager) {
     console.log(`Active Workers: ${metrics.workerCount}`);
 }
 ```
+
+### Lifecycle Events and Programmatic Shutdown
+
+The returned manager also provides lifecycle events and a programmatic close API:
+
+```javascript
+const manager = run(startWorker, { mode: "smart" });
+
+manager.on("scale_up", (event) => console.log("Scaled up:", event));
+manager.on("reload_fail", (event) => console.error("Reload failed:", event.error));
+
+await manager.reload();
+await manager.close(); // graceful shutdown without sending OS signals
+```
+
+Available event names: `worker_online`, `worker_exit`, `worker_restart_scheduled`,
+`worker_listening`, `scale_up`, `scale_down`, `reload_start`, `reload_end`,
+`reload_fail`, `shutdown_start`, `shutdown_end`.
 
 ## Working with @ynode/autoshutdown
 

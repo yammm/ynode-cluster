@@ -86,6 +86,42 @@ export interface ClusterOptions {
      * Default: false.
      */
     norestart?: boolean;
+
+    /**
+     * Timeout (ms) waiting for replacement worker to emit "online" during reload.
+     * Default: 10000.
+     */
+    reloadOnlineTimeout?: number;
+
+    /**
+     * Timeout (ms) waiting for replacement worker to emit "listening" during reload.
+     * Default: 10000.
+     */
+    reloadListeningTimeout?: number;
+
+    /**
+     * Time (ms) to wait for old worker disconnect during each reload step.
+     * Default: 2000.
+     */
+    reloadDisconnectWait?: number;
+}
+
+export type ClusterEventName =
+    | "worker_online"
+    | "worker_exit"
+    | "worker_restart_scheduled"
+    | "worker_listening"
+    | "scale_up"
+    | "scale_down"
+    | "reload_start"
+    | "reload_end"
+    | "reload_fail"
+    | "shutdown_start"
+    | "shutdown_end";
+
+export interface ClusterEvent {
+    type: ClusterEventName;
+    [key: string]: unknown;
 }
 
 /**
@@ -124,6 +160,10 @@ export interface ClusterManager {
      */
     getMetrics: () => ClusterMetrics;
     reload: () => Promise<void>;
+    close: () => Promise<void>;
+    on: (eventName: ClusterEventName, listener: (event: ClusterEvent) => void) => ClusterManager;
+    once: (eventName: ClusterEventName, listener: (event: ClusterEvent) => void) => ClusterManager;
+    off: (eventName: ClusterEventName, listener: (event: ClusterEvent) => void) => ClusterManager;
 }
 
 /**

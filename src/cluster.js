@@ -33,6 +33,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
 import cluster from "node:cluster";
+import { EventEmitter } from "node:events";
 import os from "node:os";
 
 const HEARTBEAT_INTERVAL_MS = 2000;
@@ -60,6 +61,9 @@ function buildClusterConfig(options) {
         scaleUpMemory: 0,
         maxWorkerMemory: 0,
         norestart: false,
+        reloadOnlineTimeout: 10000,
+        reloadListeningTimeout: 10000,
+        reloadDisconnectWait: 2000,
         ...rawOptions,
     };
 }
@@ -82,6 +86,24 @@ function validateClusterConfig(config) {
             `Invalid configuration: scaleUpThreshold (${config.scaleUpThreshold}) must be greater than scaleDownThreshold (${config.scaleDownThreshold})`,
         );
     }
+
+    if (config.reloadOnlineTimeout <= 0) {
+        throw new Error(
+            `Invalid configuration: reloadOnlineTimeout (${config.reloadOnlineTimeout}) must be greater than 0`,
+        );
+    }
+
+    if (config.reloadListeningTimeout <= 0) {
+        throw new Error(
+            `Invalid configuration: reloadListeningTimeout (${config.reloadListeningTimeout}) must be greater than 0`,
+        );
+    }
+
+    if (config.reloadDisconnectWait <= 0) {
+        throw new Error(
+            `Invalid configuration: reloadDisconnectWait (${config.reloadDisconnectWait}) must be greater than 0`,
+        );
+    }
 }
 
 /**
@@ -96,6 +118,9 @@ function validateClusterConfig(config) {
  * @param {string} [options.mode="smart"] - "smart" (auto-scaling) or "max" (all cores).
  * @param {number} [options.scalingCooldown=10000] - Ms to wait between scaling actions.
  * @param {number} [options.scaleDownGrace=30000] - Ms to wait after scale-up before allowing scale-down.
+ * @param {number} [options.reloadOnlineTimeout=10000] - Max ms to wait for replacement worker "online" during reload.
+ * @param {number} [options.reloadListeningTimeout=10000] - Max ms to wait for replacement worker "listening" during reload.
+ * @param {number} [options.reloadDisconnectWait=2000] - Max ms to wait for old worker disconnect during each reload step.
  * @param {object} log - The logger instance.
  */
 export function run(startWorker, options = true, log = console) {
@@ -156,6 +181,9 @@ export function run(startWorker, options = true, log = console) {
         scaleUpMemory, // MB (0 = disabled)
         maxWorkerMemory, // MB (0 = disabled)
         norestart,
+        reloadOnlineTimeout,
+        reloadListeningTimeout,
+        reloadDisconnectWait,
     } = config;
 
     const initialWorkers = mode === "max" ? maxWorkers : minWorkers;
@@ -179,9 +207,6 @@ export function run(startWorker, options = true, log = console) {
     const restartBackoffBaseMs = 100;
     const restartBackoffMaxMs = 5000;
     const restartBackoffResetUptimeMs = 30000;
-    const reloadOnlineTimeoutMs = 10000;
-    const reloadListeningTimeoutMs = 10000;
-    const reloadDisconnectWaitMs = 2000;
 
     const getWorkers = () => Object.values(cluster.workers).filter(Boolean);
     const getWorkerCount = () => Object.keys(cluster.workers).length;
@@ -225,7 +250,7 @@ export function run(startWorker, options = true, log = console) {
         }
     }
 
-    function waitForWorkerListening(worker, timeoutMs = reloadListeningTimeoutMs) {
+    function waitForWorkerListening(worker, timeoutMs = reloadListeningTimeout) {
         if (!worker) {
             return Promise.reject(new Error("Cannot wait for listening: missing worker"));
         }
@@ -266,7 +291,7 @@ export function run(startWorker, options = true, log = console) {
         });
     }
 
-    function waitForWorkerOnline(worker, timeoutMs = reloadOnlineTimeoutMs) {
+    function waitForWorkerOnline(worker, timeoutMs = reloadOnlineTimeout) {
         if (!worker) {
             return Promise.reject(new Error("Cannot wait for online: missing worker"));
         }
@@ -332,6 +357,11 @@ export function run(startWorker, options = true, log = console) {
         });
     }
 
+    const managerEvents = new EventEmitter();
+    const emitLifecycle = (type, payload = {}) => {
+        managerEvents.emit(type, { type, ...payload });
+    };
+
     function broadcastWorkerCount() {
         const count = getWorkerCount();
         for (const worker of getWorkers()) {
@@ -340,10 +370,15 @@ export function run(startWorker, options = true, log = console) {
         }
     }
 
-    cluster.on("online", (worker) => {
+    const handleWorkerOnline = (worker) => {
         attachWorkerErrorHandler(worker);
         log.info("Worker %o is online", worker.process.pid);
         broadcastWorkerCount();
+        emitLifecycle("worker_online", {
+            id: worker.id,
+            pid: worker.process.pid,
+            workerCount: getWorkerCount(),
+        });
 
         workerStartTimes.set(worker.id, Date.now());
         workerLoads.set(worker.id, { lag: 0, lastSeen: Date.now() });
@@ -358,14 +393,21 @@ export function run(startWorker, options = true, log = console) {
                 });
             }
         });
-    });
+    };
 
-    cluster.on("exit", (worker, code, signal) => {
+    const handleWorkerExit = (worker, code, signal) => {
         const workerStartTime = workerStartTimes.get(worker.id);
         workerStartTimes.delete(worker.id);
         listeningWorkers.delete(worker.id);
         workerLoads.delete(worker.id);
         const currentWorkers = getWorkerCount();
+        emitLifecycle("worker_exit", {
+            id: worker.id,
+            pid: worker.process.pid,
+            code,
+            signal,
+            workerCount: currentWorkers,
+        });
 
         if (worker.exitedAfterDisconnect) {
             return log.info(
@@ -396,6 +438,12 @@ export function run(startWorker, options = true, log = console) {
             restartBackoffBaseMs * 2 ** backoffExponent,
             restartBackoffMaxMs,
         );
+        emitLifecycle("worker_restart_scheduled", {
+            id: worker.id,
+            pid: worker.process.pid,
+            delayMs: restartDelay,
+            workerCount: currentWorkers,
+        });
 
         log.warn(
             `Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] died. Code: ${code}, Signal: ${signal}. Restarting in ${restartDelay}ms...`,
@@ -413,20 +461,122 @@ export function run(startWorker, options = true, log = console) {
         if (currentWorkers > 0) {
             restartTimer.unref();
         }
-    });
+    };
 
-    cluster.on("listening", (worker, address) => {
+    const handleWorkerListening = (worker, address) => {
         listeningWorkers.add(worker.id);
         const currentWorkers = getWorkerCount();
         log.info(
             `A worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] is now connected to ${address.address}:${address.port}`,
         );
         broadcastWorkerCount();
-    });
+        emitLifecycle("worker_listening", {
+            id: worker.id,
+            pid: worker.process.pid,
+            address: address.address,
+            port: address.port,
+            workerCount: currentWorkers,
+        });
+    };
+
+    cluster.on("online", handleWorkerOnline);
+    cluster.on("exit", handleWorkerExit);
+    cluster.on("listening", handleWorkerListening);
+
+    let autoScaleTimer;
+    let forceExitTimer;
+    let closePromise;
+    let reloadPromise;
+    const signalHandlers = new Map();
+
+    function removeSignalHandlers() {
+        for (const [signal, handler] of signalHandlers.entries()) {
+            process.off(signal, handler);
+        }
+        signalHandlers.clear();
+    }
+
+    function removeClusterHandlers() {
+        cluster.off("online", handleWorkerOnline);
+        cluster.off("exit", handleWorkerExit);
+        cluster.off("listening", handleWorkerListening);
+    }
+
+    function disconnectWorkersForShutdown() {
+        for (const worker of getWorkers()) {
+            attachWorkerErrorHandler(worker);
+            sendToWorker(worker, "shutdown");
+            worker.disconnect();
+        }
+    }
+
+    function closeCluster({ signal = null, exitOnTimeout = false, exitOnComplete = false } = {}) {
+        if (closePromise) {
+            return closePromise;
+        }
+
+        isShuttingDown = true;
+        emitLifecycle("shutdown_start", { signal, workerCount: getWorkerCount() });
+        if (autoScaleTimer) {
+            clearInterval(autoScaleTimer);
+            autoScaleTimer = undefined;
+        }
+
+        closePromise = new Promise((resolve) => {
+            let settled = false;
+
+            const finish = () => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                cluster.off("exit", onWorkerExitForClose);
+                if (forceExitTimer) {
+                    clearTimeout(forceExitTimer);
+                    forceExitTimer = undefined;
+                }
+                removeSignalHandlers();
+                removeClusterHandlers();
+                emitLifecycle("shutdown_end", { workerCount: getWorkerCount() });
+                if (exitOnComplete) {
+                    process.exit(0);
+                    return;
+                }
+                resolve();
+            };
+
+            const onWorkerExitForClose = () => {
+                if (getWorkerCount() === 0) {
+                    finish();
+                }
+            };
+
+            cluster.on("exit", onWorkerExitForClose);
+            disconnectWorkersForShutdown();
+            onWorkerExitForClose();
+
+            if (!settled && shutdownTimeout > 0) {
+                forceExitTimer = setTimeout(() => {
+                    if (settled) {
+                        return;
+                    }
+                    if (exitOnTimeout) {
+                        log.warn(`Master force exiting after ${shutdownTimeout / 1000}s timeout.`);
+                        process.exit(0);
+                        return;
+                    }
+                    finish();
+                }, shutdownTimeout);
+                forceExitTimer.unref();
+            }
+        });
+
+        return closePromise;
+    }
 
     // Auto-scaling logic
     if (mode === "smart") {
-        setInterval(() => {
+        autoScaleTimer = setInterval(() => {
             const now = Date.now();
             if (now - lastScalingAction < scalingCooldown) {
                 return;
@@ -487,7 +637,10 @@ export function run(startWorker, options = true, log = console) {
                     : `High Lag (Avg: ${avgLag.toFixed(2)}ms)`;
 
                 log.info(`${reason} detected. Scaling up...`);
-                forkWorker("scale up");
+                const scaledWorker = forkWorker("scale up");
+                if (scaledWorker) {
+                    emitLifecycle("scale_up", { reason, workerCount: currentWorkers + 1 });
+                }
                 lastScaleUpTime = Date.now();
                 lastScalingAction = now;
 
@@ -506,40 +659,37 @@ export function run(startWorker, options = true, log = console) {
                 const victim = workers[workers.length - 1];
                 if (victim) {
                     victim.disconnect();
+                    emitLifecycle("scale_down", {
+                        workerId: victim.id,
+                        workerPid: victim.process.pid,
+                        workerCount: currentWorkers - 1,
+                    });
                     lastScalingAction = now;
                 }
 
                 return;
             }
             return;
-        }, autoScaleInterval).unref();
+        }, autoScaleInterval);
+        autoScaleTimer.unref();
     }
 
     // Graceful shutdown handling for Master
     if (Array.isArray(shutdownSignals) && shutdownSignals.length > 0) {
         shutdownSignals.forEach((signal) => {
-            process.on(signal, () => {
+            if (signalHandlers.has(signal)) {
+                return;
+            }
+            const handler = () => {
                 log.info(`Master received ${signal}, shutting down workers...`);
-                isShuttingDown = true;
-                for (const worker of getWorkers()) {
-                    attachWorkerErrorHandler(worker);
-                    sendToWorker(worker, "shutdown");
-                    worker.disconnect();
-                }
-
-                // Allow some time for workers to clean up
-                if (shutdownTimeout > 0) {
-                    setTimeout(() => {
-                        log.warn(`Master force exiting after ${shutdownTimeout / 1000}s timeout.`);
-                        process.exit(0);
-                    }, shutdownTimeout).unref();
-                }
-            });
+                closeCluster({ signal, exitOnTimeout: true, exitOnComplete: true });
+            };
+            signalHandlers.set(signal, handler);
+            process.on(signal, handler);
         });
     }
 
-    // Expose metrics API
-    return {
+    const manager = {
         getMetrics: () => {
             const currentWorkers = getWorkerCount();
             let totalLag = 0;
@@ -579,41 +729,36 @@ export function run(startWorker, options = true, log = console) {
             if (isShuttingDown) {
                 return;
             }
-            log.info("Starting zero-downtime cluster reload...");
+            if (reloadPromise) {
+                return reloadPromise;
+            }
 
-            // Get a snapshot of current workers to replace
-            const workersToReplace = getWorkers();
+            reloadPromise = (async () => {
+                log.info("Starting zero-downtime cluster reload...");
+                emitLifecycle("reload_start", { workerCount: getWorkerCount() });
 
-            for (const oldWorker of workersToReplace) {
-                // Fork a new worker
-                log.info("Spawning replacement worker...");
-                const newWorker = forkWorker("spawn replacement worker");
-                if (!newWorker) {
-                    throw new Error("Reload aborted: failed to spawn replacement worker");
-                }
-                attachWorkerErrorHandler(newWorker);
+                // Get a snapshot of current workers to replace
+                const workersToReplace = getWorkers();
 
-                // Wait for the new worker to be online
-                try {
-                    await waitForWorkerOnline(newWorker);
-                } catch (err) {
-                    log.error(
-                        `Reload aborted: replacement worker ${newWorker.process.pid} failed to come online.`,
-                        err,
-                    );
-                    if (newWorker.isConnected()) {
-                        newWorker.disconnect();
+                for (const oldWorker of workersToReplace) {
+                    if (isShuttingDown) {
+                        throw new Error("Reload aborted: cluster is shutting down");
                     }
-                    throw err;
-                }
 
-                const shouldWaitForListening = listeningWorkers.has(oldWorker.id);
-                if (shouldWaitForListening) {
+                    // Fork a new worker
+                    log.info("Spawning replacement worker...");
+                    const newWorker = forkWorker("spawn replacement worker");
+                    if (!newWorker) {
+                        throw new Error("Reload aborted: failed to spawn replacement worker");
+                    }
+                    attachWorkerErrorHandler(newWorker);
+
+                    // Wait for the new worker to be online
                     try {
-                        await waitForWorkerListening(newWorker);
+                        await waitForWorkerOnline(newWorker);
                     } catch (err) {
                         log.error(
-                            `Reload aborted: replacement worker ${newWorker.process.pid} failed readiness check.`,
+                            `Reload aborted: replacement worker ${newWorker.process.pid} failed to come online.`,
                             err,
                         );
                         if (newWorker.isConnected()) {
@@ -621,33 +766,71 @@ export function run(startWorker, options = true, log = console) {
                         }
                         throw err;
                     }
-                    log.info(
-                        `Replacement worker ${newWorker.process.pid} is listening. Gracefully shutting down old worker ${oldWorker.process.pid}...`,
+
+                    const shouldWaitForListening = listeningWorkers.has(oldWorker.id);
+                    if (shouldWaitForListening) {
+                        try {
+                            await waitForWorkerListening(newWorker);
+                        } catch (err) {
+                            log.error(
+                                `Reload aborted: replacement worker ${newWorker.process.pid} failed readiness check.`,
+                                err,
+                            );
+                            if (newWorker.isConnected()) {
+                                newWorker.disconnect();
+                            }
+                            throw err;
+                        }
+                        log.info(
+                            `Replacement worker ${newWorker.process.pid} is listening. Gracefully shutting down old worker ${oldWorker.process.pid}...`,
+                        );
+                    } else {
+                        log.info(
+                            `Replacement worker ${newWorker.process.pid} is online. Gracefully shutting down old worker ${oldWorker.process.pid}...`,
+                        );
+                    }
+
+                    // Gracefully disconnect the old worker
+                    oldWorker.disconnect();
+
+                    // Wait for disconnect confirmation or short timeout to proceed to next
+                    const disconnectPromise = new Promise((resolve) =>
+                        oldWorker.once("disconnect", resolve),
                     );
-                } else {
-                    log.info(
-                        `Replacement worker ${newWorker.process.pid} is online. Gracefully shutting down old worker ${oldWorker.process.pid}...`,
+                    const timeoutPromise = new Promise((resolve) =>
+                        setTimeout(resolve, reloadDisconnectWait).unref(),
                     );
+                    await Promise.race([disconnectPromise, timeoutPromise]);
                 }
+                log.info("Cluster reload complete.");
+                emitLifecycle("reload_end", { workerCount: getWorkerCount() });
+            })()
+                .catch((err) => {
+                    emitLifecycle("reload_fail", {
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                    throw err;
+                })
+                .finally(() => {
+                    reloadPromise = undefined;
+                });
 
-                // Gracefully disconnect the old worker
-                oldWorker.disconnect();
-
-                // We don't strictly wait for the old worker to die here to speed up deployment,
-                // but it handles its own shutdown.
-                // If we wanted strict serial replacement (one dies, then next starts), we'd wait.
-                // But typically we want overlap.
-
-                // Wait for disconnect confirmation or short timeout to proceed to next
-                const disconnectPromise = new Promise((resolve) =>
-                    oldWorker.once("disconnect", resolve),
-                );
-                const timeoutPromise = new Promise((resolve) =>
-                    setTimeout(resolve, reloadDisconnectWaitMs).unref(),
-                );
-                await Promise.race([disconnectPromise, timeoutPromise]);
-            }
-            log.info("Cluster reload complete.");
+            return reloadPromise;
+        },
+        close: async () => closeCluster(),
+        on: (eventName, listener) => {
+            managerEvents.on(eventName, listener);
+            return manager;
+        },
+        once: (eventName, listener) => {
+            managerEvents.once(eventName, listener);
+            return manager;
+        },
+        off: (eventName, listener) => {
+            managerEvents.off(eventName, listener);
+            return manager;
         },
     };
+
+    return manager;
 }
