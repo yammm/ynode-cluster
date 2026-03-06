@@ -4,7 +4,7 @@ import { join } from "node:path";
 import http from "node:http";
 
 describe("Memory Scaling", () => {
-    it("should restart worker on memory leak", async (t) => {
+    it("should restart worker on memory leak", async () => {
         const scriptPath = join(process.cwd(), "test", "fixtures", "memory_app.js");
 
         // eslint-disable-next-line no-control-regex
@@ -20,6 +20,17 @@ describe("Memory Scaling", () => {
             let port = 0;
             let initialPid = null;
             let restarted = false;
+            let settled = false;
+
+            const cleanup = (signal = "SIGTERM") => {
+                clearInterval(checkInterval);
+                clearTimeout(timeout);
+                try {
+                    child.kill(signal);
+                } catch (err) {
+                    console.debug(err);
+                }
+            };
 
             child.stdout.on("data", (data) => {
                 const str = data.toString();
@@ -32,13 +43,13 @@ describe("Memory Scaling", () => {
                 // The wrapper logs "connected to ... :port"
                 const match = cleanStr.match(/connected to .*?:(\d+)/);
                 if (match && !port) {
-                    port = parseInt(match[1]);
+                    port = Number.parseInt(match[1], 10);
                     // Trigger leak
                     setTimeout(() => {
-                        http.get(`http://localhost:${port}/leak`, (res) => {
+                        http.get(`http://localhost:${port}/leak`, () => {
                             // Keep triggering until it dies?
                             // One request might be enough if leak is big
-                        });
+                        }).on("error", () => {});
                     }, 1000);
                 }
 
@@ -59,21 +70,29 @@ describe("Memory Scaling", () => {
                 }
             });
 
-            child.stderr.on("data", (d) => console.error(d.toString()));
+            child.stderr.on("data", (data) => {
+                output += data.toString();
+            });
 
             const checkInterval = setInterval(() => {
+                if (settled) {
+                    return;
+                }
                 if (restarted) {
-                    clearInterval(checkInterval);
-                    child.kill("SIGKILL");
+                    settled = true;
+                    cleanup("SIGTERM");
                     resolve();
                 }
-            }, 500);
+            }, 500).unref();
 
-            setTimeout(() => {
-                clearInterval(checkInterval);
-                child.kill("SIGKILL");
+            const timeout = setTimeout(() => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                cleanup("SIGKILL");
                 reject(new Error("Timeout waiting for memory restart. Output:\n" + output));
-            }, 30000);
+            }, 30000).unref();
         });
     });
 });

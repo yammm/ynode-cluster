@@ -4,7 +4,7 @@ import { strict as assert } from "node:assert";
 import { join } from "node:path";
 
 describe("No Restart Option", () => {
-    it("should not restart workers when norestart is true", async (t) => {
+    it("should not restart workers when norestart is true", async () => {
         const scriptPath = join(process.cwd(), "test", "fixtures", "dying_app.js");
 
         await new Promise((resolve, reject) => {
@@ -15,6 +15,16 @@ describe("No Restart Option", () => {
 
             let output = "";
             let workerStarts = 0;
+            let settled = false;
+
+            const cleanup = (signal = "SIGTERM") => {
+                clearTimeout(timeout);
+                try {
+                    child.kill(signal);
+                } catch (err) {
+                    console.debug(err);
+                }
+            };
 
             child.stdout.on("data", (data) => {
                 const str = data.toString();
@@ -29,6 +39,11 @@ describe("No Restart Option", () => {
             });
 
             child.on("close", (code) => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                clearTimeout(timeout);
                 try {
                     // With norestart: true, the worker dies, master logs it and should eventually exit
                     // (immediately if no other handles, or we might need to kill it if it hangs).
@@ -43,10 +58,14 @@ describe("No Restart Option", () => {
             });
 
             // If it hangs (meaning master didn't exit or kept restarting), timeout kills it
-            setTimeout(() => {
-                child.kill("SIGKILL");
+            const timeout = setTimeout(() => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                cleanup("SIGKILL");
                 reject(new Error(`Timeout. Worker starts: ${workerStarts}\nOutput:\n${output}`));
-            }, 5000);
+            }, 5000).unref();
         });
     });
 });

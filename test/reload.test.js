@@ -4,7 +4,7 @@ import { strict as assert } from "node:assert";
 import { join } from "node:path";
 
 describe("Cluster Reload", () => {
-    it("should reload workers (change PIDs)", async (t) => {
+    it("should reload workers (change PIDs)", async () => {
         const scriptPath = join(process.cwd(), "test", "fixtures", "reload_app.js");
 
         await new Promise((resolve, reject) => {
@@ -17,10 +17,23 @@ describe("Cluster Reload", () => {
             const originalPids = new Set();
             const newPids = new Set();
             let reloadTriggered = false;
+            let settled = false;
+
+            const cleanup = (signal = "SIGTERM") => {
+                clearTimeout(timeout);
+                try {
+                    child.kill(signal);
+                } catch (err) {
+                    console.debug(err);
+                }
+            };
 
             child.stdout.on("data", (data) => {
                 const lines = data.toString().split("\n");
                 for (const line of lines) {
+                    if (settled) {
+                        return;
+                    }
                     if (!line.trim()) {
                         continue;
                     }
@@ -51,22 +64,30 @@ describe("Cluster Reload", () => {
                             // Let's simple check:
                             assert.notDeepEqual([...originalPids].sort(), [...newPids].sort());
 
-                            child.kill("SIGTERM");
+                            settled = true;
+                            cleanup("SIGTERM");
                             resolve();
                         } catch (err) {
-                            child.kill("SIGTERM");
+                            settled = true;
+                            cleanup("SIGTERM");
                             reject(err);
                         }
                     }
                 }
             });
 
-            child.stderr.on("data", (d) => console.error(d.toString()));
+            child.stderr.on("data", (d) => {
+                output += d.toString();
+            });
 
-            setTimeout(() => {
-                child.kill("SIGKILL");
+            const timeout = setTimeout(() => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                cleanup("SIGKILL");
                 reject(new Error("Timeout waiting for reload. Output:\n" + output));
-            }, 15000);
+            }, 15000).unref();
         });
     });
 });
