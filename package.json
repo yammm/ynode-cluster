@@ -65,6 +65,7 @@
     },
     "files": [
         "src",
+        "index.d.ts",
         "README.md",
         "LICENSE"
     ]
