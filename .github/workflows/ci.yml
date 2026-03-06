@@ -34,3 +34,9 @@ jobs:
 
             - name: Test
               run: npm test
+
+            - name: Build Docs
+              run: npm run docs:clean && npm run docs
+
+            - name: Verify Docs Output
+              run: test -f docs/index.html
