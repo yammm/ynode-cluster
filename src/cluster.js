@@ -775,9 +775,9 @@ export function run(startWorker, options = true, log = console) {
                             `Failed to send shutdown message to worker ${worker.process.pid}:`,
                             err,
                         );
+                        disconnectOnce();
                     }
                     clearTimeout(fallbackTimer);
-                    disconnectOnce();
                 });
             } catch (err) {
                 clearTimeout(fallbackTimer);
