@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Home</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Home</h1>
+
+    
+
+
+
+    
+
+
+    <h3> </h3>
+
+
+
+
+
+
+
+
+
+
+    
+
+
+
+
+    <section>
+        <article><h1>@ynode/cluster</h1>
+<p>Copyright (c) 2025 Michael Welter <a href="mailto:me@mikinho.com">me@mikinho.com</a></p>
+<p><a href="https://www.npmjs.com/package/@ynode/cluster"><img src="https://img.shields.io/npm/v/@ynode/cluster.svg" alt="npm version"></a> <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a></p>
+<p><strong>Smart &amp; Easy Node.js Clustering.</strong></p>
+<p><code>@ynode/cluster</code> removes the complexity of managing Node.js cluster processes. It provides out-of-the-box support for:</p>
+<ul>
+<li><strong>Smart Auto-Scaling</strong>: Automatically spawns and kills workers based on Event Loop Lag (CPU load).</li>
+<li><strong>Resiliency</strong>: Automatically restarts workers if they crash.</li>
+<li><strong>Zero-Config Defaults</strong>: Works immediately with sensible defaults, but fully configurable.</li>
+</ul>
+<h2>Installation</h2>
+<pre class="prettyprint source lang-bash"><code>npm install @ynode/cluster
+</code></pre>
+<h2>Usage</h2>
+<p>Simply wrap your application startup logic in the <code>run()</code> function.</p>
+<pre class="prettyprint source lang-javascript"><code>import { run } from &quot;@ynode/cluster&quot;;
+import Fastify from &quot;fastify&quot;;
+
+// Define your worker logic
+const startServer = async () => {
+    const app = Fastify({ logger: true });
+
+    app.get(&quot;/&quot;, async () => &quot;Hello from worker &quot; + process.pid);
+
+    try {
+        await app.listen({ port: 3000 });
+    } catch (err) {
+        app.log.error(err);
+        process.exit(1);
+    }
+};
+
+// Start the cluster
+const control = run(startServer, {
+    mode: &quot;smart&quot;,
+    minWorkers: 2,
+    maxWorkers: 4,
+});
+
+// Access metrics
+setInterval(() => {
+    console.log(control.getMetrics());
+}, 5000);
+
+// Trigger zero-downtime reload (e.g., on SIGHUP or API call)
+// control.reload();
+</code></pre>
+<h3>Zero-Downtime Reload</h3>
+<p>You can reload the cluster (e.g. after a code deployment) without dropping connections using <code>control.reload()</code>. This will:</p>
+<ol>
+<li>Sequentially start a new worker.</li>
+<li>Wait for it to come online, and if the old worker was serving traffic, wait for the replacement to become listening.</li>
+<li>Gracefully shut down the old worker.</li>
+</ol>
+<pre class="prettyprint source lang-js"><code>await control.reload();
+console.log(&quot;Reload complete!&quot;);
+</code></pre>
+<h2>Configuration</h2>
+<p>The <code>run(startWorker, options)</code> function accepts the following options:</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enabled</code></td>
+<td><code>boolean</code></td>
+<td><code>true</code></td>
+<td>Whether to enable clustering. If <code>false</code>, runs <code>startWorker</code> directly in the main process.</td>
+</tr>
+<tr>
+<td><code>mode</code></td>
+<td><code>&quot;smart&quot; | &quot;max&quot;</code></td>
+<td><code>&quot;smart&quot;</code></td>
+<td><code>&quot;smart&quot;</code> enables auto-scaling based on load. <code>&quot;max&quot;</code> spawns <code>maxWorkers</code> and keeps them running.</td>
+</tr>
+<tr>
+<td><code>minWorkers</code></td>
+<td><code>number</code></td>
+<td><code>Math.min(2, os.availableParallelism())</code></td>
+<td>Minimum number of workers to keep alive in &quot;smart&quot; mode.</td>
+</tr>
+<tr>
+<td><code>maxWorkers</code></td>
+<td><code>number</code></td>
+<td><code>os.availableParallelism()</code></td>
+<td>Maximum number of workers to spawn.</td>
+</tr>
+<tr>
+<td><code>scaleUpThreshold</code></td>
+<td><code>number</code></td>
+<td><code>50</code></td>
+<td>Event loop lag (ms) threshold to trigger scaling up.</td>
+</tr>
+<tr>
+<td><code>scaleDownThreshold</code></td>
+<td><code>number</code></td>
+<td><code>10</code></td>
+<td>Event loop lag (ms) threshold to trigger scaling down.</td>
+</tr>
+<tr>
+<td><code>scalingCooldown</code></td>
+<td><code>number</code></td>
+<td><code>10000</code></td>
+<td>Minimum time (ms) between scaling actions.</td>
+</tr>
+<tr>
+<td><code>scaleDownGrace</code></td>
+<td><code>number</code></td>
+<td><code>30000</code></td>
+<td>Grace period (ms) after scaling up before scaling down is allowed.</td>
+</tr>
+<tr>
+<td><code>autoScaleInterval</code></td>
+<td><code>number</code></td>
+<td><code>5000</code></td>
+<td>Interval (ms) for auto-scaling checks in &quot;smart&quot; mode.</td>
+</tr>
+<tr>
+<td><code>shutdownSignals</code></td>
+<td><code>string[]</code></td>
+<td><code>['SIGINT', 'SIGTERM', 'SIGQUIT']</code></td>
+<td>Signals to listen for to trigger graceful shutdown.</td>
+</tr>
+<tr>
+<td><code>shutdownTimeout</code></td>
+<td><code>number</code></td>
+<td><code>10000</code></td>
+<td>Time (ms) to wait for workers to shut down before forced exit.</td>
+</tr>
+<tr>
+<td><code>reloadOnlineTimeout</code></td>
+<td><code>number</code></td>
+<td><code>10000</code></td>
+<td>Max time (ms) to wait for replacement worker <code>online</code> during reload.</td>
+</tr>
+<tr>
+<td><code>reloadListeningTimeout</code></td>
+<td><code>number</code></td>
+<td><code>10000</code></td>
+<td>Max time (ms) to wait for replacement worker <code>listening</code> when replacing a listening worker.</td>
+</tr>
+<tr>
+<td><code>reloadDisconnectWait</code></td>
+<td><code>number</code></td>
+<td><code>2000</code></td>
+<td>Max time (ms) to wait for an old worker to disconnect during each reload step.</td>
+</tr>
+<tr>
+<td><code>tty</code></td>
+<td><code>object</code></td>
+<td><code>{ enabled: false }</code></td>
+<td>Optional TTY command mode settings for interactive master commands.</td>
+</tr>
+<tr>
+<td><code>tty.enabled</code></td>
+<td><code>boolean</code></td>
+<td><code>false</code></td>
+<td>Enables TTY command mode in the master process.</td>
+</tr>
+<tr>
+<td><code>tty.commands</code></td>
+<td><code>boolean</code></td>
+<td><code>true</code></td>
+<td>Enables command handling when <code>tty.enabled</code> is true.</td>
+</tr>
+<tr>
+<td><code>tty.reloadCommand</code></td>
+<td><code>string</code></td>
+<td><code>&quot;rl&quot;</code></td>
+<td>Command text that triggers a zero-downtime reload.</td>
+</tr>
+<tr>
+<td><code>tty.stdin</code></td>
+<td><code>Readable</code></td>
+<td><code>process.stdin</code></td>
+<td>Input stream used for TTY command mode.</td>
+</tr>
+<tr>
+<td><code>tty.stdout</code></td>
+<td><code>Writable</code></td>
+<td><code>process.stdout</code></td>
+<td>Output stream used for TTY command mode.</td>
+</tr>
+<tr>
+<td><code>tty.prompt</code></td>
+<td><code>string</code></td>
+<td><em>(none)</em></td>
+<td>Optional prompt text shown by command mode.</td>
+</tr>
+<tr>
+<td><code>scaleUpMemory</code></td>
+<td><code>number</code></td>
+<td><code>0</code></td>
+<td>Threshold (MB) for average heap usage to trigger scaling up.</td>
+</tr>
+<tr>
+<td><code>maxWorkerMemory</code></td>
+<td><code>number</code></td>
+<td><code>0</code></td>
+<td>Max heap usage (MB) for a worker before restart (Leak Protection).</td>
+</tr>
+<tr>
+<td><code>norestart</code></td>
+<td><code>boolean</code></td>
+<td><code>false</code></td>
+<td>If true, workers will not be restarted when they die.</td>
+</tr>
+</tbody>
+</table>
+<h2>Accessing Metrics</h2>
+<p>The <code>run()</code> function returns a <code>ClusterManager</code> instance (when in cluster mode) which exposes current metrics.</p>
+<pre class="prettyprint source lang-javascript"><code>const manager = run(startWorker, { mode: &quot;smart&quot; });
+
+// In your monitoring loop or API endpoint:
+if (manager) {
+    const metrics = manager.getMetrics();
+    console.log(`Current Lag: ${metrics.avgLag.toFixed(2)}ms`);
+    console.log(`Active Workers: ${metrics.workerCount}`);
+}
+</code></pre>
+<h3>Lifecycle Events and Programmatic Shutdown</h3>
+<p>The returned manager also provides lifecycle events and a programmatic close API:</p>
+<pre class="prettyprint source lang-javascript"><code>const manager = run(startWorker, { mode: &quot;smart&quot; });
+
+manager.on(&quot;scale_up&quot;, (event) => console.log(&quot;Scaled up:&quot;, event));
+manager.on(&quot;reload_fail&quot;, (event) => console.error(&quot;Reload failed:&quot;, event.error));
+
+await manager.reload();
+await manager.close(); // graceful shutdown without sending OS signals
+</code></pre>
+<p>Available event names: <code>worker_online</code>, <code>worker_exit</code>, <code>worker_restart_scheduled</code>, <code>worker_listening</code>, <code>scale_up</code>, <code>scale_down</code>, <code>reload_start</code>, <code>reload_end</code>, <code>reload_fail</code>, <code>shutdown_start</code>, <code>shutdown_end</code>.</p>
+<h2>Working with @ynode/autoshutdown</h2>
+<p>This package works seamlessly with <strong><a href="https://www.npmjs.com/package/@ynode/autoshutdown">@ynode/autoshutdown</a></strong>.</p>
+<p>While <code>@ynode/cluster</code> manages the <strong>pool size</strong> based on overall system load (scaling up when busy, down when quiet), <code>@ynode/autoshutdown</code> manages the <strong>lifecycle of individual workers</strong> based on their specific inactivity.</p>
+<ul>
+<li><strong>@ynode/cluster</strong>: &quot;We are overloaded, add more workers!&quot; or &quot;We are effectively idle, remove the extra workers.&quot;</li>
+<li><strong>@ynode/autoshutdown</strong>: &quot;I haven't received a request in 10 minutes, I should shut down to save memory.&quot;</li>
+</ul>
+<p>Using them together ensures optimal resource usage: responsive scaling for traffic spikes and aggressive cleanup for idle periods.</p>
+<pre class="prettyprint source lang-javascript"><code>import { run } from &quot;@ynode/cluster&quot;;
+import autoShutdown from &quot;@ynode/autoshutdown&quot;;
+import Fastify from &quot;fastify&quot;;
+
+run(async () => {
+    const app = Fastify();
+
+    // Register auto-shutdown to kill this specific worker if it's unused
+    await app.register(autoShutdown, {
+        sleep: 600, // 10 minutes
+    });
+
+    await app.listen({ port: 3000 });
+});
+</code></pre>
+<h2>License</h2>
+<p>This project is licensed under the <a href="./LICENSE">MIT License</a>.</p></article>
+    </section>
+
+
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Modules</h3><ul><li><a href="module-cluster.html">cluster</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.5</a>
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>
