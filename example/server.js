@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+
 import ynodeCluster from "../src/plugin.js";
 
 // Initialize a robust, auto-scaling, zero-downtime cluster
