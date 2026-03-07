@@ -38,6 +38,7 @@
         "@eslint/json": "^0.14.0",
         "@eslint/markdown": "^7.5.1",
         "@mikinho/autover": "^2.0.1",
+        "auto-changelog": "^2.5.0",
         "eslint": "^9.39.2",
         "eslint-config-prettier": "^10.1.8",
         "eslint-plugin-prettier": "^5.5.5",
@@ -48,6 +49,7 @@
         "rimraf": "^6.1.2"
     },
     "scripts": {
+        "changelog": "auto-changelog -p",
         "docs": "node scripts/gen-docs.mjs",
         "docs:clean": "rimraf docs || rmdir /s /q docs 2> NUL || true",
         "docs:open": "node -e \"import('node:child_process').then(m=>m.exec(process.platform==='win32'?'start docs/index.html':(process.platform==='darwin'?'open docs/index.html':'xdg-open docs/index.html')))\"",
