@@ -26,6 +26,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 /**
  * Generates a JSDoc configuration file dynamically from `package.json`
  * and runs JSDoc to produce project documentation in the `docs/` directory.
+ *
+ * @module gen-docs
+ * @main gen-docs
  */
 
 import { execFileSync } from "node:child_process";
@@ -33,32 +36,58 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import process from "node:process";
 
+/**
+ * Resolve the path to `package.json` and import its contents.
+ *
+ * @property {string} pkgPath Absolute path to the local package.json file.
+ * @property {Object} pkg Parsed package.json contents.
+ */
+const pkgPath = resolve(process.cwd(), "package.json");
+const pkg = (await import(pkgPath, { with: { type: "json" } })).default;
+
+/**
+ * Extracts metadata from the project's package.json for documentation generation.
+ */
+const name = pkg.name ?? "TODO: name";
+const description = pkg.description ?? "TODO: description";
+const version = pkg.version ?? "0.0.0";
+const url = (pkg.homepage ?? "").toString();
+
 const outdir = "docs";
 if (!existsSync(outdir)) {
     mkdirSync(outdir, { recursive: true });
 }
 
 const jsdocConfigPath = resolve(process.cwd(), ".jsdoc.generated.json");
-const jsdocConfig = {
+const jsdoc = {
     source: {
         include: ["src"],
+        exclude: ["node_modules", ".git"],
         includePattern: ".+\\.js$",
         excludePattern: "(^|\\/|\\\\)(node_modules|docs|\\.git)(\\/|\\\\|$)",
     },
     opts: {
         destination: outdir,
         recurse: true,
-        encoding: "utf8",
         readme: "README.md",
+        encoding: "utf8",
+        lenient: true,
     },
+    plugins: ["plugins/markdown"],
     templates: {
         default: {
             includeDate: false,
         },
     },
-    plugins: ["plugins/markdown"],
+    metadata: {
+        name,
+        description,
+        version,
+        url,
+    },
 };
-writeFileSync(jsdocConfigPath, JSON.stringify(jsdocConfig, null, 4) + "\n", "utf8");
+
+writeFileSync(jsdocConfigPath, JSON.stringify(jsdoc, null, 4) + "\n", "utf8");
 
 try {
     const jsdocBin = resolve(process.cwd(), "node_modules", "jsdoc", "jsdoc.js");
@@ -72,5 +101,6 @@ try {
         stdio: "inherit",
     });
 } finally {
+    // Ensure cleanup of the temporary tracking configuration file
     rmSync(jsdocConfigPath, { force: true });
 }
