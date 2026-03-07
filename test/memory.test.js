@@ -1,5 +1,6 @@
-import { describe, it } from "node:test";
 import http from "node:http";
+import { describe, it } from "node:test";
+
 import { spawnFixture } from "./helpers/fixture-process.js";
 
 describe("Memory Scaling", () => {
@@ -71,11 +72,7 @@ describe("Memory Scaling", () => {
                 }
                 settled = true;
                 clearTimeout(timeout);
-                reject(
-                    new Error(
-                        `Child exited before memory restart. code=${code}\nOutput:\n${output}`,
-                    ),
-                );
+                reject(new Error(`Child exited before memory restart. code=${code}\nOutput:\n${output}`));
             });
 
             child.on("error", (err) => {

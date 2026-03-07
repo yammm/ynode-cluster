@@ -1,5 +1,6 @@
-import { run } from "../../src/cluster.js";
 import http from "node:http";
+
+import { run } from "../../src/cluster.js";
 
 const leak = [];
 

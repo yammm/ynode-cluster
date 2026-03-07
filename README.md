@@ -7,8 +7,7 @@ Copyright (c) 2025 Michael Welter <me@mikinho.com>
 
 **Smart & Easy Node.js Clustering.**
 
-`@ynode/cluster` removes the complexity of managing Node.js cluster processes. It provides
-out-of-the-box support for:
+`@ynode/cluster` removes the complexity of managing Node.js cluster processes. It provides out-of-the-box support for:
 
 - **Smart Auto-Scaling**: Automatically spawns and kills workers based on Event Loop Lag (CPU load).
 - **Resiliency**: Automatically restarts workers if they crash.
@@ -60,12 +59,11 @@ setInterval(() => {
 
 ### Zero-Downtime Reload
 
-You can reload the cluster (e.g. after a code deployment) without dropping connections using
-`control.reload()`. This will:
+You can reload the cluster (e.g. after a code deployment) without dropping connections using `control.reload()`. This
+will:
 
 1. Sequentially start a new worker.
-2. Wait for it to come online, and if the old worker was serving traffic, wait for the replacement
-   to become listening.
+2. Wait for it to come online, and if the old worker was serving traffic, wait for the replacement to become listening.
 3. Gracefully shut down the old worker.
 
 ```js
@@ -106,8 +104,7 @@ The `run(startWorker, options)` function accepts the following options:
 
 ## Accessing Metrics
 
-The `run()` function returns a `ClusterManager` instance (when in cluster mode) which exposes
-current metrics.
+The `run()` function returns a `ClusterManager` instance (when in cluster mode) which exposes current metrics.
 
 ```javascript
 const manager = run(startWorker, { mode: "smart" });
@@ -134,26 +131,21 @@ await manager.reload();
 await manager.close(); // graceful shutdown without sending OS signals
 ```
 
-Available event names: `worker_online`, `worker_exit`, `worker_restart_scheduled`,
-`worker_listening`, `scale_up`, `scale_down`, `reload_start`, `reload_end`, `reload_fail`,
-`shutdown_start`, `shutdown_end`.
+Available event names: `worker_online`, `worker_exit`, `worker_restart_scheduled`, `worker_listening`, `scale_up`,
+`scale_down`, `reload_start`, `reload_end`, `reload_fail`, `shutdown_start`, `shutdown_end`.
 
 ## Working with @ynode/autoshutdown
 
-This package works seamlessly with
-**[@ynode/autoshutdown](https://www.npmjs.com/package/@ynode/autoshutdown)**.
+This package works seamlessly with **[@ynode/autoshutdown](https://www.npmjs.com/package/@ynode/autoshutdown)**.
 
-While `@ynode/cluster` manages the **pool size** based on overall system load (scaling up when busy,
-down when quiet), `@ynode/autoshutdown` manages the **lifecycle of individual workers** based on
-their specific inactivity.
+While `@ynode/cluster` manages the **pool size** based on overall system load (scaling up when busy, down when quiet),
+`@ynode/autoshutdown` manages the **lifecycle of individual workers** based on their specific inactivity.
 
-- **@ynode/cluster**: "We are overloaded, add more workers!" or "We are effectively idle, remove the
-  extra workers."
-- **@ynode/autoshutdown**: "I haven't received a request in 10 minutes, I should shut down to save
-  memory."
+- **@ynode/cluster**: "We are overloaded, add more workers!" or "We are effectively idle, remove the extra workers."
+- **@ynode/autoshutdown**: "I haven't received a request in 10 minutes, I should shut down to save memory."
 
-Using them together ensures optimal resource usage: responsive scaling for traffic spikes and
-aggressive cleanup for idle periods.
+Using them together ensures optimal resource usage: responsive scaling for traffic spikes and aggressive cleanup for
+idle periods.
 
 ```javascript
 import { run } from "@ynode/cluster";

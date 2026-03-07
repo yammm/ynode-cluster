@@ -1,6 +1,7 @@
-import { run } from "../../src/cluster.js";
-import http from "node:http";
 import cluster from "node:cluster";
+import http from "node:http";
+
+import { run } from "../../src/cluster.js";
 
 run(
     () => {

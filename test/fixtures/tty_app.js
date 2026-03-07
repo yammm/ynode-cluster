@@ -1,5 +1,6 @@
 import cluster from "node:cluster";
 import { PassThrough } from "node:stream";
+
 import { run } from "../../src/cluster.js";
 
 const ttyInput = new PassThrough();

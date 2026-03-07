@@ -1,5 +1,6 @@
-import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { describe, it } from "node:test";
+
 import { runFixtureWithOutput } from "./helpers/fixture-process.js";
 
 describe("Cluster Manager Features", () => {
@@ -23,13 +24,8 @@ describe("Cluster Manager Features", () => {
         assert.match(output, /EVENT:shutdown_start:1/);
         assert.match(output, /EVENT:shutdown_end:1/);
 
-        const reloadStarts =
-            output.match(/Starting zero-downtime cluster reload\.\.\./g)?.length ?? 0;
-        assert.equal(
-            reloadStarts,
-            1,
-            `Expected one reload execution despite two calls.\nOutput:\n${output}`,
-        );
+        const reloadStarts = output.match(/Starting zero-downtime cluster reload\.\.\./g)?.length ?? 0;
+        assert.equal(reloadStarts, 1, `Expected one reload execution despite two calls.\nOutput:\n${output}`);
     });
 
     it("should validate reload timeout options", async () => {
@@ -66,12 +62,7 @@ describe("Cluster Manager Features", () => {
             `Expected both callers to receive the same rejection message.\nOutput:\n${output}`,
         );
 
-        const reloadStarts =
-            output.match(/Starting zero-downtime cluster reload\.\.\./g)?.length ?? 0;
-        assert.equal(
-            reloadStarts,
-            1,
-            `Expected one reload execution despite two failing calls.\nOutput:\n${output}`,
-        );
+        const reloadStarts = output.match(/Starting zero-downtime cluster reload\.\.\./g)?.length ?? 0;
+        assert.equal(reloadStarts, 1, `Expected one reload execution despite two failing calls.\nOutput:\n${output}`);
     });
 });

@@ -75,9 +75,7 @@ function resolveClusteringEnabled(options) {
         }
 
         if (typeof options.enabled !== "boolean") {
-            throw new Error(
-                `Invalid configuration: enabled (${options.enabled}) must be a boolean`,
-            );
+            throw new Error(`Invalid configuration: enabled (${options.enabled}) must be a boolean`);
         }
 
         return options.enabled;
@@ -143,15 +141,11 @@ function validateTtyConfig(ttyConfig) {
     }
 
     if (ttyConfig.enabled !== undefined && typeof ttyConfig.enabled !== "boolean") {
-        throw new Error(
-            `Invalid configuration: tty.enabled (${ttyConfig.enabled}) must be a boolean`,
-        );
+        throw new Error(`Invalid configuration: tty.enabled (${ttyConfig.enabled}) must be a boolean`);
     }
 
     if (ttyConfig.commands !== undefined && typeof ttyConfig.commands !== "boolean") {
-        throw new Error(
-            `Invalid configuration: tty.commands (${ttyConfig.commands}) must be a boolean`,
-        );
+        throw new Error(`Invalid configuration: tty.commands (${ttyConfig.commands}) must be a boolean`);
     }
 
     if (
@@ -214,15 +208,11 @@ function validateClusterConfig(config) {
     }
 
     if (!Number.isInteger(config.minWorkers) || config.minWorkers < 1) {
-        throw new Error(
-            `Invalid configuration: minWorkers (${config.minWorkers}) must be an integer >= 1`,
-        );
+        throw new Error(`Invalid configuration: minWorkers (${config.minWorkers}) must be an integer >= 1`);
     }
 
     if (!Number.isInteger(config.maxWorkers) || config.maxWorkers < 1) {
-        throw new Error(
-            `Invalid configuration: maxWorkers (${config.maxWorkers}) must be an integer >= 1`,
-        );
+        throw new Error(`Invalid configuration: maxWorkers (${config.maxWorkers}) must be an integer >= 1`);
     }
 
     if (config.autoScaleInterval <= 0) {
@@ -232,15 +222,11 @@ function validateClusterConfig(config) {
     }
 
     if (config.scaleUpThreshold < 0) {
-        throw new Error(
-            `Invalid configuration: scaleUpThreshold (${config.scaleUpThreshold}) must be >= 0`,
-        );
+        throw new Error(`Invalid configuration: scaleUpThreshold (${config.scaleUpThreshold}) must be >= 0`);
     }
 
     if (config.scaleDownThreshold < 0) {
-        throw new Error(
-            `Invalid configuration: scaleDownThreshold (${config.scaleDownThreshold}) must be >= 0`,
-        );
+        throw new Error(`Invalid configuration: scaleDownThreshold (${config.scaleDownThreshold}) must be >= 0`);
     }
 
     if (config.minWorkers > config.maxWorkers) {
@@ -250,9 +236,7 @@ function validateClusterConfig(config) {
     }
 
     if (!VALID_MODES.has(config.mode)) {
-        throw new Error(
-            `Invalid configuration: mode (${config.mode}) must be either "smart" or "max"`,
-        );
+        throw new Error(`Invalid configuration: mode (${config.mode}) must be either "smart" or "max"`);
     }
 
     if (config.scaleUpThreshold <= config.scaleDownThreshold) {
@@ -306,9 +290,7 @@ function validateClusterConfig(config) {
  */
 export function run(startWorker, options = true, log = console) {
     if (typeof startWorker !== "function") {
-        throw new Error(
-            `Invalid configuration: startWorker (${typeof startWorker}) must be a function`,
-        );
+        throw new Error(`Invalid configuration: startWorker (${typeof startWorker}) must be a function`);
     }
 
     const isEnabled = resolveClusteringEnabled(options);
@@ -494,9 +476,7 @@ export function run(startWorker, options = true, log = console) {
                 settled = true;
                 cleanup();
                 reject(
-                    new Error(
-                        `Replacement worker ${worker.process.pid} did not become online within ${timeoutMs}ms`,
-                    ),
+                    new Error(`Replacement worker ${worker.process.pid} did not become online within ${timeoutMs}ms`),
                 );
             }, timeoutMs);
             timeout.unref();
@@ -520,11 +500,7 @@ export function run(startWorker, options = true, log = console) {
                 if (!settled) {
                     settled = true;
                     cleanup();
-                    reject(
-                        new Error(
-                            `Replacement worker ${worker.process.pid} disconnected before becoming online`,
-                        ),
-                    );
+                    reject(new Error(`Replacement worker ${worker.process.pid} disconnected before becoming online`));
                 }
             };
 
@@ -663,10 +639,7 @@ export function run(startWorker, options = true, log = console) {
 
         consecutiveCrashRestarts += 1;
         const backoffExponent = Math.min(Math.max(0, consecutiveCrashRestarts - 1), 16);
-        const restartDelay = Math.min(
-            restartBackoffBaseMs * 2 ** backoffExponent,
-            restartBackoffMaxMs,
-        );
+        const restartDelay = Math.min(restartBackoffBaseMs * 2 ** backoffExponent, restartBackoffMaxMs);
         emitLifecycle("worker_restart_scheduled", {
             id: worker.id,
             pid: worker.process.pid,
@@ -771,10 +744,7 @@ export function run(startWorker, options = true, log = console) {
             try {
                 worker.send("shutdown", (err) => {
                     if (err) {
-                        log.debug(
-                            `Failed to send shutdown message to worker ${worker.process.pid}:`,
-                            err,
-                        );
+                        log.debug(`Failed to send shutdown message to worker ${worker.process.pid}:`, err);
                         disconnectOnce();
                     }
                     clearTimeout(fallbackTimer);

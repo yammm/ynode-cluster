@@ -1,5 +1,6 @@
-import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { describe, it } from "node:test";
+
 import { expectFixtureFailure, spawnFixture } from "./helpers/fixture-process.js";
 
 describe("Cluster Integration", () => {
@@ -63,11 +64,7 @@ describe("Cluster Integration", () => {
                     resolved = true;
                     resolve();
                 } catch (err) {
-                    reject(
-                        new Error(
-                            `Child exited early. code=${code}\n${err.message}\nOutput:\n${output}`,
-                        ),
-                    );
+                    reject(new Error(`Child exited early. code=${code}\n${err.message}\nOutput:\n${output}`));
                 }
             });
 
@@ -175,9 +172,7 @@ it("should ignore malformed worker IPC messages", async () => {
                 } catch (err) {
                     console.debug(err);
                 }
-                reject(
-                    new Error("Timeout waiting for malformed-message fixture. Output:\n" + output),
-                );
+                reject(new Error("Timeout waiting for malformed-message fixture. Output:\n" + output));
             });
         }, 10000).unref();
 
@@ -192,11 +187,7 @@ it("should ignore malformed worker IPC messages", async () => {
         child.on("close", (code) => {
             finish(() => {
                 try {
-                    assert.equal(
-                        code,
-                        0,
-                        `Expected clean exit for malformed IPC handling.\n${output}`,
-                    );
+                    assert.equal(code, 0, `Expected clean exit for malformed IPC handling.\n${output}`);
                     assert.match(output, /Shogun is the master!/);
                     assert.doesNotMatch(output, /TypeError/);
                     resolve();
@@ -236,8 +227,7 @@ const invalidConfigCases = [
     {
         name: "should throw error on invalid shutdownSignals configuration",
         fixture: "invalid_shutdown_signals_app.js",
-        pattern:
-            /Invalid configuration: shutdownSignals \(SIGTERM\) must be an array of non-empty strings/,
+        pattern: /Invalid configuration: shutdownSignals \(SIGTERM\) must be an array of non-empty strings/,
     },
     {
         name: "should throw error when minWorkers is not an integer",
@@ -272,8 +262,7 @@ const invalidConfigCases = [
     {
         name: "should throw error on duplicate shutdownSignals",
         fixture: "invalid_duplicate_shutdown_signals_app.js",
-        pattern:
-            /Invalid configuration: shutdownSignals \(SIGTERM,SIGTERM\) must not contain duplicates/,
+        pattern: /Invalid configuration: shutdownSignals \(SIGTERM,SIGTERM\) must not contain duplicates/,
     },
     {
         name: "should throw error when startWorker is not a function",

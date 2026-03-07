@@ -1,5 +1,6 @@
-import { run } from "../../src/cluster.js";
 import cluster from "node:cluster";
+
+import { run } from "../../src/cluster.js";
 
 run(
     () => {

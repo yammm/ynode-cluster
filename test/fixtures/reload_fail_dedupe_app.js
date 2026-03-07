@@ -1,4 +1,5 @@
 import cluster from "node:cluster";
+
 import { run } from "../../src/cluster.js";
 
 const control = run(

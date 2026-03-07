@@ -7,9 +7,8 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - Cluster manager lifecycle event API: `on`, `once`, `off`.
-- New manager events: `worker_online`, `worker_exit`, `worker_restart_scheduled`,
-  `worker_listening`, `scale_up`, `scale_down`, `reload_start`, `reload_end`, `reload_fail`,
-  `shutdown_start`, `shutdown_end`.
+- New manager events: `worker_online`, `worker_exit`, `worker_restart_scheduled`, `worker_listening`, `scale_up`,
+  `scale_down`, `reload_start`, `reload_end`, `reload_fail`, `shutdown_start`, `shutdown_end`.
 - Programmatic graceful shutdown API: `manager.close()`.
 - New reload timing options:
     - `reloadOnlineTimeout`
@@ -23,8 +22,8 @@ All notable changes to this project will be documented in this file.
 - `reload()` now deduplicates concurrent calls and shares one in-flight promise.
 - Reload and shutdown behavior was hardened for failure and race handling.
 - Cluster config parsing/validation and worker orchestration internals were refactored for clarity.
-- Metrics now report `uptime` from worker start time, and memory scale-up averaging uses only
-  workers with memory samples.
+- Metrics now report `uptime` from worker start time, and memory scale-up averaging uses only workers with memory
+  samples.
 - Published package now includes `index.d.ts`.
 
 ### Fixed
