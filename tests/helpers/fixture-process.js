@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { join } from "node:path";
 
 export function getFixturePath(fixtureName) {
-    return join(process.cwd(), "test", "fixtures", fixtureName);
+    return join(process.cwd(), "tests", "fixtures", fixtureName);
 }
 
 export function spawnFixture(fixtureName, options = {}) {
