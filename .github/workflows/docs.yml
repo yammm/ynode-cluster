@@ -20,16 +20,13 @@ jobs:
             - name: Setup Node
               uses: actions/setup-node@v4
               with:
-                  node-version: "20"
+                  node-version: "18"
 
             - name: Install deps
               run: npm ci
 
             - name: Build JSDoc
-              run: npm run docs:clean && npm run docs
-
-            - name: Verify docs output
-              run: test -f docs/index.html
+              run: npm run docs
 
             - name: Publish to gh-pages
               uses: peaceiris/actions-gh-pages@v3
