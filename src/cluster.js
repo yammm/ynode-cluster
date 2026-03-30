@@ -194,11 +194,7 @@ function normalizeHeartbeatMemory(memory) {
         return memory;
     }
 
-    if (
-        memory !== null &&
-        typeof memory === "object" &&
-        Number.isFinite(memory.heapUsed)
-    ) {
+    if (memory !== null && typeof memory === "object" && Number.isFinite(memory.heapUsed)) {
         return memory.heapUsed;
     }
 
