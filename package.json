@@ -28,7 +28,10 @@
         "event-loop",
         "lag",
         "resiliency",
-        "node"
+        "node",
+        "zero-downtime",
+        "graceful-restart",
+        "smart-scaling"
     ],
     "engines": {
         "node": ">=20"
