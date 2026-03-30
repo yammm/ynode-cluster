@@ -78,7 +78,10 @@ export async function expectFixtureFailure(fixtureName, stderrPattern, { timeout
     });
 }
 
-export async function runFixtureWithOutput(fixtureName, { timeoutMs = 10000, onStdout, onStderr } = {}) {
+export async function runFixtureWithOutput(
+    fixtureName,
+    { timeoutMs = 10000, onStdout, onStderr } = {},
+) {
     return new Promise((resolve, reject) => {
         const child = spawnFixture(fixtureName);
         let output = "";

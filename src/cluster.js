@@ -75,7 +75,9 @@ function resolveClusteringEnabled(options) {
         }
 
         if (typeof options.enabled !== "boolean") {
-            throw new Error(`Invalid configuration: enabled (${options.enabled}) must be a boolean`);
+            throw new Error(
+                `Invalid configuration: enabled (${options.enabled}) must be a boolean`,
+            );
         }
 
         return options.enabled;
@@ -141,11 +143,15 @@ function validateTtyConfig(ttyConfig) {
     }
 
     if (ttyConfig.enabled !== undefined && typeof ttyConfig.enabled !== "boolean") {
-        throw new Error(`Invalid configuration: tty.enabled (${ttyConfig.enabled}) must be a boolean`);
+        throw new Error(
+            `Invalid configuration: tty.enabled (${ttyConfig.enabled}) must be a boolean`,
+        );
     }
 
     if (ttyConfig.commands !== undefined && typeof ttyConfig.commands !== "boolean") {
-        throw new Error(`Invalid configuration: tty.commands (${ttyConfig.commands}) must be a boolean`);
+        throw new Error(
+            `Invalid configuration: tty.commands (${ttyConfig.commands}) must be a boolean`,
+        );
     }
 
     if (
@@ -208,11 +214,15 @@ function validateClusterConfig(config) {
     }
 
     if (!Number.isInteger(config.minWorkers) || config.minWorkers < 1) {
-        throw new Error(`Invalid configuration: minWorkers (${config.minWorkers}) must be an integer >= 1`);
+        throw new Error(
+            `Invalid configuration: minWorkers (${config.minWorkers}) must be an integer >= 1`,
+        );
     }
 
     if (!Number.isInteger(config.maxWorkers) || config.maxWorkers < 1) {
-        throw new Error(`Invalid configuration: maxWorkers (${config.maxWorkers}) must be an integer >= 1`);
+        throw new Error(
+            `Invalid configuration: maxWorkers (${config.maxWorkers}) must be an integer >= 1`,
+        );
     }
 
     if (config.autoScaleInterval <= 0) {
@@ -222,11 +232,15 @@ function validateClusterConfig(config) {
     }
 
     if (config.scaleUpThreshold < 0) {
-        throw new Error(`Invalid configuration: scaleUpThreshold (${config.scaleUpThreshold}) must be >= 0`);
+        throw new Error(
+            `Invalid configuration: scaleUpThreshold (${config.scaleUpThreshold}) must be >= 0`,
+        );
     }
 
     if (config.scaleDownThreshold < 0) {
-        throw new Error(`Invalid configuration: scaleDownThreshold (${config.scaleDownThreshold}) must be >= 0`);
+        throw new Error(
+            `Invalid configuration: scaleDownThreshold (${config.scaleDownThreshold}) must be >= 0`,
+        );
     }
 
     if (config.minWorkers > config.maxWorkers) {
@@ -236,7 +250,9 @@ function validateClusterConfig(config) {
     }
 
     if (!VALID_MODES.has(config.mode)) {
-        throw new Error(`Invalid configuration: mode (${config.mode}) must be either "smart" or "max"`);
+        throw new Error(
+            `Invalid configuration: mode (${config.mode}) must be either "smart" or "max"`,
+        );
     }
 
     if (config.scaleUpThreshold <= config.scaleDownThreshold) {
@@ -290,7 +306,9 @@ function validateClusterConfig(config) {
  */
 export function run(startWorker, options = true, log = console) {
     if (typeof startWorker !== "function") {
-        throw new Error(`Invalid configuration: startWorker (${typeof startWorker}) must be a function`);
+        throw new Error(
+            `Invalid configuration: startWorker (${typeof startWorker}) must be a function`,
+        );
     }
 
     const isEnabled = resolveClusteringEnabled(options);
@@ -370,6 +388,7 @@ export function run(startWorker, options = true, log = console) {
 
     const workerLoads = new Map();
     const workerStartTimes = new Map();
+    const workerMessageHandlers = new Map();
     const listeningWorkers = new Set();
     const workersWithErrorHandler = new WeakSet();
     let lastScalingAction = Date.now();
@@ -476,7 +495,9 @@ export function run(startWorker, options = true, log = console) {
                 settled = true;
                 cleanup();
                 reject(
-                    new Error(`Replacement worker ${worker.process.pid} did not become online within ${timeoutMs}ms`),
+                    new Error(
+                        `Replacement worker ${worker.process.pid} did not become online within ${timeoutMs}ms`,
+                    ),
                 );
             }, timeoutMs);
             timeout.unref();
@@ -500,7 +521,11 @@ export function run(startWorker, options = true, log = console) {
                 if (!settled) {
                     settled = true;
                     cleanup();
-                    reject(new Error(`Replacement worker ${worker.process.pid} disconnected before becoming online`));
+                    reject(
+                        new Error(
+                            `Replacement worker ${worker.process.pid} disconnected before becoming online`,
+                        ),
+                    );
                 }
             };
 
@@ -584,7 +609,7 @@ export function run(startWorker, options = true, log = console) {
         workerStartTimes.set(worker.id, Date.now());
         workerLoads.set(worker.id, { lag: 0, lastSeen: Date.now() });
 
-        worker.on("message", (msg) => {
+        const messageHandler = (msg) => {
             if (!msg || typeof msg !== "object" || msg.cmd !== "heartbeat") {
                 return;
             }
@@ -597,7 +622,9 @@ export function run(startWorker, options = true, log = console) {
                 lastSeen: Date.now(),
                 memory,
             });
-        });
+        };
+        workerMessageHandlers.set(worker.id, { worker, handler: messageHandler });
+        worker.on("message", messageHandler);
     };
 
     const handleWorkerExit = (worker, code, signal) => {
@@ -605,6 +632,12 @@ export function run(startWorker, options = true, log = console) {
         workerStartTimes.delete(worker.id);
         listeningWorkers.delete(worker.id);
         workerLoads.delete(worker.id);
+
+        const tracked = workerMessageHandlers.get(worker.id);
+        if (tracked) {
+            tracked.worker.off("message", tracked.handler);
+            workerMessageHandlers.delete(worker.id);
+        }
         const currentWorkers = getWorkerCount();
         emitLifecycle("worker_exit", {
             id: worker.id,
@@ -637,9 +670,12 @@ export function run(startWorker, options = true, log = console) {
             consecutiveCrashRestarts = 0;
         }
 
-        consecutiveCrashRestarts += 1;
+        ++consecutiveCrashRestarts;
         const backoffExponent = Math.min(Math.max(0, consecutiveCrashRestarts - 1), 16);
-        const restartDelay = Math.min(restartBackoffBaseMs * 2 ** backoffExponent, restartBackoffMaxMs);
+        const restartDelay = Math.min(
+            restartBackoffBaseMs * 2 ** backoffExponent,
+            restartBackoffMaxMs,
+        );
         emitLifecycle("worker_restart_scheduled", {
             id: worker.id,
             pid: worker.process.pid,
@@ -744,7 +780,10 @@ export function run(startWorker, options = true, log = console) {
             try {
                 worker.send("shutdown", (err) => {
                     if (err) {
-                        log.debug(`Failed to send shutdown message to worker ${worker.process.pid}:`, err);
+                        log.debug(
+                            `Failed to send shutdown message to worker ${worker.process.pid}:`,
+                            err,
+                        );
                         disconnectOnce();
                     }
                     clearTimeout(fallbackTimer);
@@ -852,7 +891,7 @@ export function run(startWorker, options = true, log = console) {
             for (const stats of workerLoads.values()) {
                 if (typeof stats.memory === "number") {
                     totalMemory += stats.memory;
-                    memorySamples += 1;
+                    ++memorySamples;
                 }
             }
             const avgMemoryMB = memorySamples > 0 ? totalMemory / memorySamples / 1024 / 1024 : 0;
@@ -866,7 +905,6 @@ export function run(startWorker, options = true, log = console) {
                         continue;
                     }
                     const memMB = stats.memory / 1024 / 1024;
-                    // console.log(`[Master] Checking Worker ${id} Memory: ${memMB.toFixed(2)}MB (Limit: ${maxWorkerMemory}MB)`);
                     if (memMB > maxWorkerMemory) {
                         log.warn(
                             `Worker ${id} exceeded memory limit (${memMB.toFixed(2)}MB > ${maxWorkerMemory}MB). Restarting...`,
@@ -930,9 +968,9 @@ export function run(startWorker, options = true, log = console) {
 
     // Graceful shutdown handling for Master
     if (Array.isArray(shutdownSignals) && shutdownSignals.length > 0) {
-        shutdownSignals.forEach((signal) => {
+        for (const signal of shutdownSignals) {
             if (signalHandlers.has(signal)) {
-                return;
+                continue;
             }
             const handler = () => {
                 log.info(`Master received ${signal}, shutting down workers...`);
@@ -940,7 +978,7 @@ export function run(startWorker, options = true, log = console) {
             };
             signalHandlers.set(signal, handler);
             process.on(signal, handler);
-        });
+        }
     }
 
     const manager = {
@@ -952,7 +990,7 @@ export function run(startWorker, options = true, log = console) {
 
             for (const [id, stats] of workerLoads.entries()) {
                 totalLag += stats.lag;
-                count++;
+                ++count;
 
                 const worker = cluster.workers[id];
                 const workerStartTime = workerStartTimes.get(id);
@@ -998,6 +1036,14 @@ export function run(startWorker, options = true, log = console) {
                 for (const oldWorker of workersToReplace) {
                     if (isShuttingDown) {
                         throw new Error("Reload aborted: cluster is shutting down");
+                    }
+
+                    // Validate the snapshot entry is still a live worker
+                    if (!cluster.workers[oldWorker.id]) {
+                        log.info(
+                            `Skipping worker ${oldWorker.process.pid} — already exited before reload reached it.`,
+                        );
+                        continue;
                     }
 
                     // Fork a new worker
@@ -1046,7 +1092,11 @@ export function run(startWorker, options = true, log = console) {
                     }
 
                     // Gracefully disconnect the old worker
-                    oldWorker.disconnect();
+                    try {
+                        oldWorker.disconnect();
+                    } catch (err) {
+                        log.warn(`Failed to disconnect old worker ${oldWorker.process.pid}:`, err);
+                    }
 
                     // Wait for disconnect confirmation or a short timeout to proceed.
                     await waitForWorkerDisconnect(oldWorker);

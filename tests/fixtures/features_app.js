@@ -19,7 +19,13 @@ const control = run(
 );
 
 if (!cluster.isWorker && control) {
-    for (const eventName of ["worker_online", "reload_start", "reload_end", "shutdown_start", "shutdown_end"]) {
+    for (const eventName of [
+        "worker_online",
+        "reload_start",
+        "reload_end",
+        "shutdown_start",
+        "shutdown_end",
+    ]) {
         let count = 0;
         control.on(eventName, () => {
             count += 1;

@@ -72,7 +72,11 @@ describe("Memory Scaling", () => {
                 }
                 settled = true;
                 clearTimeout(timeout);
-                reject(new Error(`Child exited before memory restart. code=${code}\nOutput:\n${output}`));
+                reject(
+                    new Error(
+                        `Child exited before memory restart. code=${code}\nOutput:\n${output}`,
+                    ),
+                );
             });
 
             child.on("error", (err) => {
