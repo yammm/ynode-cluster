@@ -10,7 +10,7 @@ describe("Cluster Reload", () => {
         let reloadTriggered = false;
         let reloadCompleted = false;
 
-        const { output } = await runFixtureWithOutput("reload_app.js", {
+        const { output } = await runFixtureWithOutput("reload-app.js", {
             timeoutMs: 15000,
             onStdout: (chunk, child) => {
                 for (const line of chunk.split("\n")) {

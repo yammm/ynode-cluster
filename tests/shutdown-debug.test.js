@@ -8,7 +8,7 @@ describe("Cluster Shutdown", () => {
         let workersOnline = 0;
         let signalSent = false;
 
-        const { code, output } = await runFixtureWithOutput("shutdown_app.js", {
+        const { code, output } = await runFixtureWithOutput("shutdown-app.js", {
             timeoutMs: 5000,
             onStdout: (chunk, child) => {
                 const onlineMatches = chunk.match(/Worker .*?\d+.*? is online/g);

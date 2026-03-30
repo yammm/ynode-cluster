@@ -5,7 +5,7 @@ import { runFixtureWithOutput } from "./helpers/fixture-process.js";
 
 describe("Metrics API", () => {
     it("should export metrics via getMetrics()", async () => {
-        const { code, output } = await runFixtureWithOutput("metrics_app.js", {
+        const { code, output } = await runFixtureWithOutput("metrics-app.js", {
             timeoutMs: 15000,
         });
 

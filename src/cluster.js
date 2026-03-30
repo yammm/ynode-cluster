@@ -189,6 +189,22 @@ function buildTtyConfig(ttyOptions) {
     };
 }
 
+function normalizeHeartbeatMemory(memory) {
+    if (Number.isFinite(memory)) {
+        return memory;
+    }
+
+    if (
+        memory !== null &&
+        typeof memory === "object" &&
+        Number.isFinite(memory.heapUsed)
+    ) {
+        return memory.heapUsed;
+    }
+
+    return undefined;
+}
+
 function validateClusterConfig(config) {
     validateFiniteNumericConfig(config);
     validateNonNegativeNumericConfig(config);
@@ -615,7 +631,7 @@ export function run(startWorker, options = true, log = console) {
             }
 
             const lag = Number.isFinite(msg.lag) ? msg.lag : 0;
-            const memory = typeof msg.memory === "number" ? msg.memory : undefined;
+            const memory = normalizeHeartbeatMemory(msg.memory);
 
             workerLoads.set(worker.id, {
                 lag,

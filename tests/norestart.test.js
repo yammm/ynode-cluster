@@ -5,7 +5,7 @@ import { runFixtureWithOutput } from "./helpers/fixture-process.js";
 
 describe("No Restart Option", () => {
     it("should not restart workers when norestart is true", async () => {
-        const { output } = await runFixtureWithOutput("dying_app.js", {
+        const { output } = await runFixtureWithOutput("dying-app.js", {
             timeoutMs: 5000,
         });
 

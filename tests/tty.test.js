@@ -6,7 +6,7 @@ import { spawnFixture } from "./helpers/fixture-process.js";
 describe("TTY Command Mode", () => {
     it("should handle reload commands and ignore duplicate reload trigger", async () => {
         await new Promise((resolve, reject) => {
-            const child = spawnFixture("tty_app.js", {
+            const child = spawnFixture("tty-app.js", {
                 stdio: ["pipe", "pipe", "pipe", "ipc"],
                 env: { TEST_STDIN_IS_TTY: "1" },
             });
@@ -118,7 +118,7 @@ describe("TTY Command Mode", () => {
 
     it("should skip command mode when stdin is non-TTY", async () => {
         await new Promise((resolve, reject) => {
-            const child = spawnFixture("tty_app.js", {
+            const child = spawnFixture("tty-app.js", {
                 stdio: ["pipe", "pipe", "pipe", "ipc"],
                 env: { TEST_STDIN_IS_TTY: "0" },
             });

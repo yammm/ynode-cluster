@@ -7,7 +7,7 @@ describe("Cluster Manager Features", () => {
     it("should dedupe concurrent reload calls and expose lifecycle events", async () => {
         let exerciseSent = false;
 
-        const { code, output } = await runFixtureWithOutput("features_app.js", {
+        const { code, output } = await runFixtureWithOutput("features-app.js", {
             onStdout: (_str, child, currentOutput) => {
                 if (!exerciseSent && currentOutput.includes("EVENT:worker_online:1")) {
                     exerciseSent = true;
@@ -34,7 +34,7 @@ describe("Cluster Manager Features", () => {
     });
 
     it("should validate reload timeout options", async () => {
-        const { code, output } = await runFixtureWithOutput("invalid_reload_timeout_app.js", {
+        const { code, output } = await runFixtureWithOutput("invalid-reload-timeout-app.js", {
             timeoutMs: 5000,
         });
 
@@ -45,7 +45,7 @@ describe("Cluster Manager Features", () => {
     it("should dedupe concurrent reload failures and reject both callers", async () => {
         let exerciseSent = false;
 
-        const { code, output } = await runFixtureWithOutput("reload_fail_dedupe_app.js", {
+        const { code, output } = await runFixtureWithOutput("reload-fail-dedupe-app.js", {
             onStdout: (_str, child, currentOutput) => {
                 if (!exerciseSent && currentOutput.includes(" is online")) {
                     exerciseSent = true;

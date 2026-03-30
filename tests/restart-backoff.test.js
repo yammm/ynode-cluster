@@ -24,7 +24,7 @@ describe("Worker Restart Backoff", () => {
             }
         };
 
-        const { output } = await runFixtureWithOutput("crash_loop_app.js", {
+        const { output } = await runFixtureWithOutput("crash-loop-app.js", {
             timeoutMs: 8000,
             onStdout: collectDelays,
             onStderr: collectDelays,

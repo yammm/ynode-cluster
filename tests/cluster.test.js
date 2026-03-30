@@ -85,7 +85,7 @@ describe("Cluster Integration", () => {
 
 it("should support null options by using default cluster settings", async () => {
     await new Promise((resolve, reject) => {
-        const child = spawnFixture("null_options_app.js");
+        const child = spawnFixture("null-options-app.js");
 
         let output = "";
         let resolved = false;
@@ -148,7 +148,7 @@ it("should support null options by using default cluster settings", async () => 
 
 it("should ignore malformed worker IPC messages", async () => {
     await new Promise((resolve, reject) => {
-        const child = spawnFixture("malformed_message_app.js");
+        const child = spawnFixture("malformed-message-app.js");
 
         let output = "";
         let settled = false;
@@ -216,74 +216,74 @@ it("should ignore malformed worker IPC messages", async () => {
 const invalidConfigCases = [
     {
         name: "should throw error on invalid configuration",
-        fixture: "invalid_app.js",
+        fixture: "invalid-app.js",
         pattern: /Invalid configuration/,
     },
     {
         name: "should throw error on non-finite numeric configuration",
-        fixture: "invalid_numeric_config_app.js",
+        fixture: "invalid-numeric-config-app.js",
         pattern: /Invalid configuration: minWorkers \(NaN\) must be a finite number/,
     },
     {
         name: "should throw error on non-boolean enabled configuration",
-        fixture: "invalid_enabled_config_app.js",
+        fixture: "invalid-enabled-config-app.js",
         pattern: /Invalid configuration: enabled \(false\) must be a boolean/,
     },
     {
         name: "should throw error on non-boolean norestart configuration",
-        fixture: "invalid_norestart_config_app.js",
+        fixture: "invalid-norestart-config-app.js",
         pattern: /Invalid configuration: norestart \(no\) must be a boolean/,
     },
     {
         name: "should throw error on invalid shutdownSignals configuration",
-        fixture: "invalid_shutdown_signals_app.js",
+        fixture: "invalid-shutdown-signals-app.js",
         pattern:
             /Invalid configuration: shutdownSignals \(SIGTERM\) must be an array of non-empty strings/,
     },
     {
         name: "should throw error when minWorkers is not an integer",
-        fixture: "invalid_min_workers_integer_app.js",
+        fixture: "invalid-min-workers-integer-app.js",
         pattern: /Invalid configuration: minWorkers \(1.5\) must be an integer >= 1/,
     },
     {
         name: "should throw error when maxWorkers is less than 1",
-        fixture: "invalid_max_workers_minimum_app.js",
+        fixture: "invalid-max-workers-minimum-app.js",
         pattern: /Invalid configuration: maxWorkers \(0\) must be an integer >= 1/,
     },
     {
         name: "should throw error on negative scalingCooldown",
-        fixture: "invalid_negative_scaling_cooldown_app.js",
+        fixture: "invalid-negative-scaling-cooldown-app.js",
         pattern: /Invalid configuration: scalingCooldown \(-1\) must be >= 0/,
     },
     {
         name: "should throw error on negative scaleUpMemory",
-        fixture: "invalid_negative_scale_up_memory_app.js",
+        fixture: "invalid-negative-scale-up-memory-app.js",
         pattern: /Invalid configuration: scaleUpMemory \(-5\) must be >= 0/,
     },
     {
         name: "should throw error on non-positive autoScaleInterval",
-        fixture: "invalid_zero_auto_scale_interval_app.js",
+        fixture: "invalid-zero-auto-scale-interval-app.js",
         pattern: /Invalid configuration: autoScaleInterval \(0\) must be greater than 0/,
     },
     {
         name: "should throw error on negative scaleDownThreshold",
-        fixture: "invalid_negative_scale_down_threshold_app.js",
+        fixture: "invalid-negative-scale-down-threshold-app.js",
         pattern: /Invalid configuration: scaleDownThreshold \(-1\) must be >= 0/,
     },
     {
         name: "should throw error on duplicate shutdownSignals",
-        fixture: "invalid_duplicate_shutdown_signals_app.js",
+        fixture: "invalid-duplicate-shutdown-signals-app.js",
         pattern:
             /Invalid configuration: shutdownSignals \(SIGTERM,SIGTERM\) must not contain duplicates/,
     },
     {
         name: "should throw error when startWorker is not a function",
-        fixture: "invalid_start_worker_app.js",
+        fixture: "invalid-start-worker-app.js",
         pattern: /Invalid configuration: startWorker \(string\) must be a function/,
     },
     {
         name: "should throw error on invalid mode",
-        fixture: "invalid_mode_app.js",
+        fixture: "invalid-mode-app.js",
         pattern: /Invalid configuration: mode/,
     },
 ];

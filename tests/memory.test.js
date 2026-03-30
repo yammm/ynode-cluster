@@ -1,7 +1,8 @@
+import { strict as assert } from "node:assert";
 import http from "node:http";
 import { describe, it } from "node:test";
 
-import { spawnFixture } from "./helpers/fixture-process.js";
+import { runFixtureWithOutput, spawnFixture } from "./helpers/fixture-process.js";
 
 describe("Memory Scaling", () => {
     it("should restart worker on memory leak", async () => {
@@ -9,7 +10,7 @@ describe("Memory Scaling", () => {
         const sanitize = new RegExp("\\x1b\\[\\d+m", "g");
 
         await new Promise((resolve, reject) => {
-            const child = spawnFixture("memory_app.js", {
+            const child = spawnFixture("memory-app.js", {
                 stdio: ["pipe", "pipe", "pipe", "ipc"], // Enable IPC for messages if needed, though we rely on stdout
             });
 
@@ -97,5 +98,14 @@ describe("Memory Scaling", () => {
                 reject(new Error("Timeout waiting for memory restart. Output:\n" + output));
             }, 30000).unref();
         });
+    });
+
+    it("should restart worker when heartbeat memory is sent as a process.memoryUsage() object", async () => {
+        const { code, output } = await runFixtureWithOutput("object-memory-restart-app.js", {
+            timeoutMs: 4000,
+        });
+
+        assert.equal(code, 0, "Object-form heartbeat should trigger restart. Output:\n" + output);
+        assert.match(output, /OBJECT_MEMORY_RESTART/);
     });
 });
