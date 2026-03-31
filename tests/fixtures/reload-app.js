@@ -14,6 +14,11 @@ const control = run(
                 }
             });
         // console.log(`Worker ${process.pid} started`);
+        process.on("message", (msg) => {
+            if (msg === "shutdown") {
+process.exit(0);
+}
+        });
         // Send a message to master to log PID?
         // Or just log from worker. Master pipes stdout.
         console.log(`PID:${process.pid}`);

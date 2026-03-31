@@ -43,12 +43,12 @@ describe("TTY Command Mode", () => {
             const maybeDrive = () => {
                 if (
                     !commandsSent &&
-                    output.includes("TTY command mode enabled. Type 'rl' to reload workers.")
+                    output.includes("TTY command mode enabled. Type '/rl' to reload workers.")
                 ) {
                     commandsSent = true;
                     safeSend({ cmd: "send", line: "help" });
-                    safeSend({ cmd: "send", line: "rl" });
-                    safeSend({ cmd: "send", line: "rl" });
+                    safeSend({ cmd: "send", line: "/rl" });
+                    safeSend({ cmd: "send", line: "/rl" });
                 }
 
                 if (
@@ -56,7 +56,7 @@ describe("TTY Command Mode", () => {
                     !exitRequested &&
                     output.includes("TTY: reload command received.") &&
                     output.includes("TTY: reload already in progress.") &&
-                    output.includes("TTY_OUT:TTY commands: rl") &&
+                    output.includes("TTY_OUT:TTY commands: /rl") &&
                     output.includes("EVENT:reload_end")
                 ) {
                     exitRequested = true;
@@ -91,11 +91,11 @@ describe("TTY Command Mode", () => {
                         assert.equal(code, 0, `Expected clean exit.\nOutput:\n${output}`);
                         assert.match(
                             output,
-                            /TTY command mode enabled\. Type 'rl' to reload workers\./,
+                            /TTY command mode enabled\. Type '\/rl' to reload workers\./,
                         );
                         assert.match(output, /TTY: reload command received\./);
                         assert.match(output, /TTY: reload already in progress\./);
-                        assert.match(output, /TTY_OUT:TTY commands: rl/);
+                        assert.match(output, /TTY_OUT:TTY commands: \/rl/);
 
                         const reloadStarts = output.match(/EVENT:reload_start/g)?.length ?? 0;
                         assert.equal(

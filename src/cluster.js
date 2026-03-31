@@ -38,8 +38,35 @@ import os from "node:os";
 import { createInterface } from "node:readline";
 
 const HEARTBEAT_INTERVAL_MS = 2000;
-const DEFAULT_TTY_RELOAD_COMMAND = "rl";
+const DEFAULT_TTY_RELOAD_COMMAND = "/rl";
 const VALID_MODES = new Set(["smart", "max"]);
+
+function formatUptime(ms) {
+    const seconds = Math.floor(ms / 1000);
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    const parts = [];
+    if (days > 0) {
+        parts.push(`${days}d`);
+    }
+    if (hours > 0) {
+        parts.push(`${hours}h`);
+    }
+    if (minutes > 0) {
+        parts.push(`${minutes}m`);
+    }
+    parts.push(`${secs}s`);
+    return parts.join(" ");
+}
+
+function formatMemoryMB(bytes) {
+    if (!Number.isFinite(bytes)) {
+        return "—";
+    }
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
 const NUMERIC_CONFIG_KEYS = [
     "minWorkers",
     "maxWorkers",
@@ -110,7 +137,7 @@ function buildClusterConfig(options) {
         norestart: false,
         reloadOnlineTimeout: 10000,
         reloadListeningTimeout: 10000,
-        reloadDisconnectWait: 2000,
+        reloadDisconnectWait: 10000,
         ...rawOptions,
     };
 }
@@ -306,11 +333,11 @@ function validateClusterConfig(config) {
  * @param {number} [options.scaleDownGrace=30000] - Ms to wait after scale-up before allowing scale-down.
  * @param {number} [options.reloadOnlineTimeout=10000] - Max ms to wait for replacement worker "online" during reload.
  * @param {number} [options.reloadListeningTimeout=10000] - Max ms to wait for replacement worker "listening" during reload.
- * @param {number} [options.reloadDisconnectWait=2000] - Max ms to wait for old worker disconnect during each reload step.
+ * @param {number} [options.reloadDisconnectWait=10000] - Max ms to wait for old worker to exit during each reload step.
  * @param {object} [options.tty] - Optional TTY command mode options.
  * @param {boolean} [options.tty.enabled=false] - Enable TTY mode in master process.
  * @param {boolean} [options.tty.commands=true] - Enable line-based command handling when TTY mode is enabled.
- * @param {string} [options.tty.reloadCommand="rl"] - Command that triggers a cluster reload.
+ * @param {string} [options.tty.reloadCommand="/rl"] - Command that triggers a cluster reload.
  * @param {stream.Readable} [options.tty.stdin=process.stdin] - Input stream used for command mode.
  * @param {stream.Writable} [options.tty.stdout=process.stdout] - Output stream used for command mode.
  * @param {string} [options.tty.prompt] - Optional command prompt text.
@@ -387,6 +414,7 @@ export function run(startWorker, options = true, log = console) {
     } = config;
     const ttyConfig = buildTtyConfig(ttyOptions);
 
+    const masterStartTime = Date.now();
     const initialWorkers = mode === "max" ? maxWorkers : minWorkers;
     log.info(`Shogun is the master! Starting ${initialWorkers} workers (Max: ${maxWorkers}).`);
 
@@ -450,6 +478,49 @@ export function run(startWorker, options = true, log = console) {
         } catch (err) {
             log.debug(`Failed to send IPC message to worker ${worker.process.pid}:`, err);
         }
+    }
+
+    function collectWorkerReplies(cmd, timeoutMs = 3000) {
+        const workers = getWorkers();
+        if (workers.length === 0) {
+            return Promise.resolve([]);
+        }
+
+        return new Promise((resolve) => {
+            const replies = [];
+            const handlers = new Map();
+            let settled = false;
+
+            const finish = () => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                clearTimeout(timer);
+                for (const [worker, handler] of handlers) {
+                    worker.off("message", handler);
+                }
+                resolve(replies);
+            };
+
+            const timer = setTimeout(finish, timeoutMs);
+            timer.unref();
+
+            for (const worker of workers) {
+                const handler = (msg) => {
+                    if (!msg || typeof msg !== "object" || msg.cmd !== cmd) {
+                        return;
+                    }
+                    replies.push({ pid: worker.process.pid, id: worker.id, ...msg });
+                    if (replies.length === workers.length) {
+                        finish();
+                    }
+                };
+                handlers.set(worker, handler);
+                worker.on("message", handler);
+                sendToWorker(worker, { cmd });
+            }
+        });
     }
 
     function waitForWorkerListening(worker, timeoutMs = reloadListeningTimeout) {
@@ -559,26 +630,31 @@ export function run(startWorker, options = true, log = console) {
         });
     }
 
-    function waitForWorkerDisconnect(worker, timeoutMs = reloadDisconnectWait) {
+
+    function waitForWorkerExit(worker, timeoutMs = reloadDisconnectWait) {
         if (!worker) {
             return Promise.resolve("missing-worker");
+        }
+
+        if (worker.isDead()) {
+            return Promise.resolve("exit");
         }
 
         return new Promise((resolve) => {
             let settled = false;
 
             const cleanup = () => {
-                worker.off("disconnect", onDisconnect);
+                worker.off("exit", onExit);
                 clearTimeout(timeout);
             };
 
-            const onDisconnect = () => {
+            const onExit = () => {
                 if (settled) {
                     return;
                 }
                 settled = true;
                 cleanup();
-                resolve("disconnect");
+                resolve("exit");
             };
 
             const timeout = setTimeout(() => {
@@ -587,11 +663,14 @@ export function run(startWorker, options = true, log = console) {
                 }
                 settled = true;
                 cleanup();
+                log.warn(
+                    `Timed out waiting for worker ${worker.process.pid} to exit after ${timeoutMs}ms`,
+                );
                 resolve("timeout");
             }, timeoutMs);
             timeout.unref();
 
-            worker.on("disconnect", onDisconnect);
+            worker.on("exit", onExit);
         });
     }
 
@@ -1103,15 +1182,61 @@ export function run(startWorker, options = true, log = console) {
                         );
                     }
 
-                    // Gracefully disconnect the old worker
-                    try {
-                        oldWorker.disconnect();
-                    } catch (err) {
-                        log.warn(`Failed to disconnect old worker ${oldWorker.process.pid}:`, err);
+                    // Signal the old worker to shut down gracefully via IPC so it
+                    // can run fastify.close() and tear down connections before the
+                    // cluster disconnects it. Falls back to disconnect() if the
+                    // message cannot be delivered.
+                    if (oldWorker.isConnected()) {
+                        try {
+                            oldWorker.send("shutdown", (err) => {
+                                if (err) {
+                                    log.warn(
+                                        `Failed to send shutdown to old worker ${oldWorker.process.pid}, falling back to disconnect:`,
+                                        err,
+                                    );
+                                    try {
+                                        oldWorker.disconnect();
+                                    } catch (disconnectErr) {
+                                        log.warn(
+                                            `Failed to disconnect old worker ${oldWorker.process.pid}:`,
+                                            disconnectErr,
+                                        );
+                                    }
+                                }
+                            });
+                        } catch (err) {
+                            log.warn(
+                                `Failed to send shutdown to old worker ${oldWorker.process.pid}, falling back to disconnect:`,
+                                err,
+                            );
+                            try {
+                                oldWorker.disconnect();
+                            } catch (disconnectErr) {
+                                log.warn(
+                                    `Failed to disconnect old worker ${oldWorker.process.pid}:`,
+                                    disconnectErr,
+                                );
+                            }
+                        }
+                    } else {
+                        try {
+                            oldWorker.disconnect();
+                        } catch (err) {
+                            log.warn(`Failed to disconnect old worker ${oldWorker.process.pid}:`, err);
+                        }
                     }
 
-                    // Wait for disconnect confirmation or a short timeout to proceed.
-                    await waitForWorkerDisconnect(oldWorker);
+                    // Wait for the old worker process to fully exit so connections
+                    // (Redis, Mongoose, etc.) are torn down before cycling the next worker.
+                    const exitResult = await waitForWorkerExit(oldWorker);
+                    if (exitResult === "timeout" && !oldWorker.isDead()) {
+                        try {
+                            log.warn(`Forcing disconnect on unresponsive worker ${oldWorker.process.pid}`);
+                            oldWorker.disconnect();
+                        } catch (err) {
+                            log.warn(`Failed to force disconnect old worker ${oldWorker.process.pid}:`, err);
+                        }
+                    }
                 }
                 log.info("Cluster reload complete.");
                 emitLifecycle("reload_end", { workerCount: getWorkerCount() });
@@ -1143,6 +1268,78 @@ export function run(startWorker, options = true, log = console) {
         },
     };
 
+    function buildStatusOutput() {
+        const now = Date.now();
+        const workers = getWorkers();
+        const lines = [
+            `Master uptime: ${formatUptime(now - masterStartTime)}  |  Mode: ${mode}  |  Workers: ${workers.length} (${minWorkers}–${maxWorkers})`,
+        ];
+
+        if (workers.length === 0) {
+            lines.push("  No active workers.");
+            return lines.join("\n") + "\n";
+        }
+
+        lines.push("  PID      Uptime       Lag     Memory     Listening");
+        lines.push("  ───      ──────       ───     ──────     ─────────");
+        for (const worker of workers) {
+            const startTime = workerStartTimes.get(worker.id);
+            const uptime = startTime ? formatUptime(now - startTime) : "—";
+            const load = workerLoads.get(worker.id);
+            const lag = load ? `${load.lag}ms` : "—";
+            const mem = load ? formatMemoryMB(load.memory) : "—";
+            const listening = listeningWorkers.has(worker.id) ? "yes" : "no";
+            lines.push(
+                `  ${String(worker.process.pid).padEnd(9)}${uptime.padEnd(13)}${lag.padEnd(8)}${mem.padEnd(11)}${listening}`,
+            );
+        }
+
+        return lines.join("\n") + "\n";
+    }
+
+    async function handleTtyPing(commandOutput) {
+        commandOutput.write("Pinging workers...\n");
+        const replies = await collectWorkerReplies("ping");
+        const workers = getWorkers();
+
+        if (replies.length === 0) {
+            commandOutput.write("  No responses received.\n");
+            return;
+        }
+
+        for (const reply of replies) {
+            commandOutput.write(`  Worker ${reply.pid}: pong\n`);
+        }
+
+        if (replies.length < workers.length) {
+            commandOutput.write(`  (${workers.length - replies.length} worker(s) did not respond)\n`);
+        }
+    }
+
+    async function handleTtyVersion(commandOutput) {
+        commandOutput.write(`Master: node ${process.version}\n`);
+        const replies = await collectWorkerReplies("version");
+        const workers = getWorkers();
+
+        if (replies.length === 0) {
+            commandOutput.write("  No worker responses received.\n");
+            return;
+        }
+
+        for (const reply of replies) {
+            const appVersion = reply.appVersion ?? "—";
+            commandOutput.write(
+                `  Worker ${reply.pid}: ${appVersion} (node ${reply.nodeVersion ?? process.version})\n`,
+            );
+        }
+
+        if (replies.length < workers.length) {
+            commandOutput.write(`  (${workers.length - replies.length} worker(s) did not respond)\n`);
+        }
+    }
+
+    const TTY_COMMANDS = ["/status", "/ping", "/version"];
+
     function setupTtyCommandMode() {
         if (!ttyConfig.enabled || !ttyConfig.commands) {
             return;
@@ -1172,8 +1369,9 @@ export function run(startWorker, options = true, log = console) {
             }
         };
 
-        ttyReadline.on("line", (line) => {
+        ttyReadline.on("line", async (line) => {
             const command = line.trim();
+
             if (command === reloadCommand) {
                 if (reloadPromise) {
                     log.info("TTY: reload already in progress.");
@@ -1189,8 +1387,27 @@ export function run(startWorker, options = true, log = console) {
                 return;
             }
 
+            if (command === "/status") {
+                commandOutput.write(buildStatusOutput());
+                showPrompt();
+                return;
+            }
+
+            if (command === "/ping") {
+                await handleTtyPing(commandOutput);
+                showPrompt();
+                return;
+            }
+
+            if (command === "/version") {
+                await handleTtyVersion(commandOutput);
+                showPrompt();
+                return;
+            }
+
             if (command.length > 0) {
-                commandOutput.write(`TTY commands: ${reloadCommand}\n`);
+                const allCommands = [...new Set([reloadCommand, ...TTY_COMMANDS])];
+                commandOutput.write(`TTY commands: ${allCommands.join(", ")}\n`);
             }
             showPrompt();
         });
