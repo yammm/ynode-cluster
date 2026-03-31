@@ -630,7 +630,6 @@ export function run(startWorker, options = true, log = console) {
         });
     }
 
-
     function waitForWorkerExit(worker, timeoutMs = reloadDisconnectWait) {
         if (!worker) {
             return Promise.resolve("missing-worker");
@@ -1222,7 +1221,10 @@ export function run(startWorker, options = true, log = console) {
                         try {
                             oldWorker.disconnect();
                         } catch (err) {
-                            log.warn(`Failed to disconnect old worker ${oldWorker.process.pid}:`, err);
+                            log.warn(
+                                `Failed to disconnect old worker ${oldWorker.process.pid}:`,
+                                err,
+                            );
                         }
                     }
 
@@ -1231,10 +1233,15 @@ export function run(startWorker, options = true, log = console) {
                     const exitResult = await waitForWorkerExit(oldWorker);
                     if (exitResult === "timeout" && !oldWorker.isDead()) {
                         try {
-                            log.warn(`Forcing disconnect on unresponsive worker ${oldWorker.process.pid}`);
+                            log.warn(
+                                `Forcing disconnect on unresponsive worker ${oldWorker.process.pid}`,
+                            );
                             oldWorker.disconnect();
                         } catch (err) {
-                            log.warn(`Failed to force disconnect old worker ${oldWorker.process.pid}:`, err);
+                            log.warn(
+                                `Failed to force disconnect old worker ${oldWorker.process.pid}:`,
+                                err,
+                            );
                         }
                     }
                 }
@@ -1312,7 +1319,9 @@ export function run(startWorker, options = true, log = console) {
         }
 
         if (replies.length < workers.length) {
-            commandOutput.write(`  (${workers.length - replies.length} worker(s) did not respond)\n`);
+            commandOutput.write(
+                `  (${workers.length - replies.length} worker(s) did not respond)\n`,
+            );
         }
     }
 
@@ -1334,7 +1343,9 @@ export function run(startWorker, options = true, log = console) {
         }
 
         if (replies.length < workers.length) {
-            commandOutput.write(`  (${workers.length - replies.length} worker(s) did not respond)\n`);
+            commandOutput.write(
+                `  (${workers.length - replies.length} worker(s) did not respond)\n`,
+            );
         }
     }
 

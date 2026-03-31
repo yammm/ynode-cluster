@@ -7,8 +7,8 @@ const control = run(
         const keepAlive = setInterval(() => {}, 1000);
         process.on("message", (msg) => {
             if (msg === "shutdown") {
-process.exit(0);
-}
+                process.exit(0);
+            }
         });
         process.on("disconnect", () => {
             clearInterval(keepAlive);

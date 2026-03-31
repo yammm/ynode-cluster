@@ -92,13 +92,22 @@ The `run(startWorker, options)` function accepts the following options:
 | `tty` | `object` | `{ enabled: false }` | Optional TTY command mode settings for interactive master commands. |
 | `tty.enabled` | `boolean` | `false` | Enables TTY command mode in the master process. |
 | `tty.commands` | `boolean` | `true` | Enables command handling when `tty.enabled` is true. |
-| `tty.reloadCommand` | `string` | `"rl"` | Command text that triggers a zero-downtime reload. |
+| `tty.reloadCommand` | `string` | `"/rl"` | Command text that triggers a zero-downtime reload. |
 | `tty.stdin` | `Readable` | `process.stdin` | Input stream used for TTY command mode. |
 | `tty.stdout` | `Writable` | `process.stdout` | Output stream used for TTY command mode. |
 | `tty.prompt` | `string` | _(none)_ | Optional prompt text shown by command mode. |
 | `scaleUpMemory` | `number` | `0` | Threshold (MB) for average heap usage to trigger scaling up. |
 | `maxWorkerMemory` | `number` | `0` | Max heap usage (MB) for a worker before restart (Leak Protection). |
 | `norestart` | `boolean` | `false` | If true, workers will not be restarted when they die. |
+
+### TTY Command Mode
+
+When `tty.enabled` is set to `true`, the master process listens to `process.stdin` for operations. By default, the following commands are available:
+
+- `/rl` - Triggers a zero-downtime cluster reload (can be customized via `tty.reloadCommand`).
+- `/status` - Displays a live table of connected workers, including PID, uptime, load lag, memory consumption, and network listening status.
+- `/ping` - Pings all active workers over IPC to ensure responsiveness.
+- `/version` - Gathers and prints the `appVersion` and Node.js version from all workers.
 
 ## Accessing Metrics
 
