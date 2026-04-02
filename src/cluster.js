@@ -1009,6 +1009,14 @@ export function run(startWorker, options = true, log = console) {
                 }
             }
 
+            // Skip all scaling decisions during an active reload — worker count
+            // is transiently inflated and the reload orchestrator owns the lifecycle.
+            // Leak protection above still runs since it is a safety concern.
+            if (reloadPromise) {
+                log.debug("Skipping scale decision during active reload.");
+                return;
+            }
+
             // Scale Up logic (Lag OR Memory)
             const shouldScaleUpLag = avgLag > scaleUpThreshold;
             const shouldScaleUpMem = scaleUpMemory > 0 && avgMemoryMB > scaleUpMemory;
