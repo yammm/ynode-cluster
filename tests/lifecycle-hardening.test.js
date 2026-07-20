@@ -35,6 +35,16 @@ async function waitForProcessesToExit(pids, timeoutMs = 1000) {
 }
 
 describe("Lifecycle hardening", () => {
+    it("reduces desired smart-pool capacity after a voluntary exit above the floor", async () => {
+        const { code, output } = await runFixtureWithOutput("voluntary-scale-down-app.js", {
+            timeoutMs: 5000,
+        });
+
+        assert.equal(code, 0, `Expected a clean voluntary scale-down.\n${output}`);
+        assert.match(output, /VOLUNTARY_SCALE_DOWN:1:1:1/);
+        assert.doesNotMatch(output, /Restarting in \d+ms/);
+    });
+
     it("restores minWorkers after a voluntary worker disconnect", async () => {
         const { code, output } = await runFixtureWithOutput("voluntary-floor-app.js", {
             timeoutMs: 5000,

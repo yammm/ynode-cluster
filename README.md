@@ -164,6 +164,10 @@ While `@ynode/cluster` manages the **pool size** based on overall system load (s
 
 Using them together ensures optimal resource usage: responsive scaling for traffic spikes and aggressive cleanup for idle periods. A voluntary idle exit can reduce a smart pool, but Cluster reconciles immediately when the exit would cross `minWorkers`. In `mode: "max"`, voluntary exits are replaced to preserve `maxWorkers`.
 
+Autoshutdown must retire a Node cluster worker with `cluster.worker.disconnect()`. Cluster uses Node's `worker.exitedAfterDisconnect` signal to distinguish an intentional idle exit from a crash. A smart pool above its floor reduces `desiredWorkers`; a failed or non-voluntary exit restores the previous desired capacity. The integration suite verifies both the scale-down-above-floor and floor-restoration cases with real worker processes.
+
+Cluster already owns worker heartbeat and heap/RSS retirement. When using the packages together, leave Autoshutdown `reportLoad` disabled and configure memory thresholds with Cluster's `maxWorkerMemory` or `maxWorkerRss`. `@ynode/bootify` enforces this ownership split automatically.
+
 ```javascript
 import { run } from "@ynode/cluster";
 import autoShutdown from "@ynode/autoshutdown";
