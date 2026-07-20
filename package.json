@@ -1,6 +1,6 @@
 {
     "name": "@ynode/cluster",
-    "version": "1.9.1",
+    "version": "1.10.0",
     "description": "Smart, resource-aware Node.js cluster manager with bounded reload and shutdown orchestration.",
     "main": "src/cluster.js",
     "exports": {
