@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 
-import { runFixtureWithOutput } from "./helpers/fixture-process.js";
+import { killFixture, runFixtureWithOutput } from "./helpers/fixture-process.js";
 
 describe("Worker Restart Backoff", () => {
     it("should increase restart delay on repeated crashes", async () => {
@@ -17,7 +17,7 @@ describe("Worker Restart Backoff", () => {
             if (!stopTriggered && delays.length >= 3) {
                 stopTriggered = true;
                 try {
-                    child.kill("SIGKILL");
+                    killFixture(child);
                 } catch (err) {
                     console.debug(err);
                 }

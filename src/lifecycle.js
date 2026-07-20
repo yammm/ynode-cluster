@@ -28,17 +28,24 @@ import cluster from "node:cluster";
 const RESTART_BACKOFF_BASE_MS = 100;
 const RESTART_BACKOFF_MAX_MS = 5000;
 const RESTART_BACKOFF_RESET_UPTIME_MS = 30000;
+const RETIRE_TERM_WAIT_MS = 1000;
+const RETIRE_KILL_WAIT_MS = 1000;
 
 function normalizeHeartbeatMemory(memory) {
     if (Number.isFinite(memory)) {
-        return memory;
+        return { heapUsed: memory };
     }
 
     // Workers running an older heartbeat format may still send the full
     // process.memoryUsage() object. Accept it transparently and pull out
     // heapUsed so the master-side scaling math stays consistent.
     if (memory !== null && typeof memory === "object" && Number.isFinite(memory.heapUsed)) {
-        return memory.heapUsed;
+        return {
+            heapUsed: memory.heapUsed,
+            rss: Number.isFinite(memory.rss) ? memory.rss : undefined,
+            external: Number.isFinite(memory.external) ? memory.external : undefined,
+            arrayBuffers: Number.isFinite(memory.arrayBuffers) ? memory.arrayBuffers : undefined,
+        };
     }
 
     return undefined;
@@ -62,22 +69,72 @@ function normalizeHeartbeatMemory(memory) {
  */
 export function createLifecycle(state) {
     const { config, log, events } = state;
-    const { maxWorkers, norestart } = config;
+    const { maxWorkers, minWorkers, mode, norestart } = config;
 
     const getWorkers = () => Object.values(cluster.workers).filter(Boolean);
-    const getWorkerCount = () => Object.keys(cluster.workers).length;
+    const getWorkerCount = () => getWorkers().length;
+    const getActiveWorkers = () =>
+        getWorkers().filter((worker) => state.workerStates.get(worker.id) !== "draining");
+    const getActiveWorkerCount = () => getActiveWorkers().length;
 
     function emitLifecycle(type, payload = {}) {
-        events.emit(type, { type, ...payload });
+        const event = { type, ...payload };
+        for (const listener of events.rawListeners(type)) {
+            try {
+                const result = listener(event);
+                if (result && typeof result.then === "function") {
+                    void result.catch((err) => {
+                        log.error(`Async cluster lifecycle listener for ${type} failed:`, err);
+                    });
+                }
+            } catch (err) {
+                log.error(`Cluster lifecycle listener for ${type} failed:`, err);
+            }
+        }
     }
 
-    function forkWorker(context) {
+    function forkWorker(context, { allowSurge = false } = {}) {
+        const desiredWorkers = state.desiredWorkers > 0 ? state.desiredWorkers : maxWorkers;
+        const processLimit = Math.min(maxWorkers, desiredWorkers) + (allowSurge ? 1 : 0);
+        if (getWorkerCount() >= processLimit) {
+            log.debug(
+                `Skipping ${context}: process limit ${processLimit} reached (${getWorkerCount()} running).`,
+            );
+            return null;
+        }
+
         try {
-            return cluster.fork();
+            const worker = cluster.fork();
+            state.workerStates.set(worker.id, "starting");
+            return worker;
         } catch (err) {
             log.error(`Failed to ${context}:`, err);
             return null;
         }
+    }
+
+    function setDesiredWorkerCount(count) {
+        state.desiredWorkers = Math.max(minWorkers, Math.min(maxWorkers, count));
+        return state.desiredWorkers;
+    }
+
+    function ensureDesiredCapacity(context = "reconcile worker capacity") {
+        if (state.isShuttingDown) {
+            return [];
+        }
+
+        const workers = [];
+        while (getActiveWorkerCount() < state.desiredWorkers) {
+            const worker = forkWorker(context);
+            if (!worker) {
+                break;
+            }
+            workers.push(worker);
+        }
+        if (workers.length > 0) {
+            broadcastWorkerCount();
+        }
+        return workers;
     }
 
     function attachWorkerErrorHandler(worker) {
@@ -110,6 +167,117 @@ export function createLifecycle(state) {
         }
     }
 
+    function waitForWorkerExit(worker, timeoutMs) {
+        if (!worker || worker.isDead()) {
+            return Promise.resolve(true);
+        }
+
+        return new Promise((resolve) => {
+            let settled = false;
+            const finish = (exited) => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                worker.off("exit", onExit);
+                clearTimeout(timeout);
+                resolve(exited);
+            };
+            const onExit = () => finish(true);
+            const timeout = setTimeout(() => finish(false), Math.max(0, timeoutMs));
+            timeout.unref();
+            worker.once("exit", onExit);
+
+            if (worker.isDead()) {
+                finish(true);
+            }
+        });
+    }
+
+    function killWorker(worker, signal) {
+        if (!worker || worker.isDead()) {
+            return;
+        }
+        try {
+            worker.kill(signal);
+        } catch (err) {
+            log.warn(`Failed to send ${signal} to worker ${worker.process.pid}:`, err);
+        }
+    }
+
+    async function performWorkerRetirement(
+        worker,
+        {
+            reason = "retire",
+            graceMs = config.shutdownTimeout,
+            termMs = RETIRE_TERM_WAIT_MS,
+            killMs = RETIRE_KILL_WAIT_MS,
+        } = {},
+    ) {
+        if (!worker || worker.isDead()) {
+            return { forced: false, phase: "already-exited" };
+        }
+
+        attachWorkerErrorHandler(worker);
+        state.workerStates.set(worker.id, "draining");
+        state.workerRetirements.set(worker.id, { reason, startedAt: Date.now() });
+        broadcastWorkerCount();
+
+        if (worker.isConnected()) {
+            try {
+                worker.send("shutdown", (err) => {
+                    if (err) {
+                        log.debug(
+                            `Failed to send graceful shutdown to worker ${worker.process.pid}:`,
+                            err,
+                        );
+                    }
+                });
+            } catch (err) {
+                log.debug(`Failed to send graceful shutdown to worker ${worker.process.pid}:`, err);
+            }
+        }
+
+        if (await waitForWorkerExit(worker, graceMs)) {
+            return { forced: false, phase: "graceful" };
+        }
+
+        log.warn(
+            `Worker ${worker.process.pid} did not exit during ${reason} after ${graceMs}ms; sending SIGTERM.`,
+        );
+        killWorker(worker, "SIGTERM");
+        if (await waitForWorkerExit(worker, termMs)) {
+            return { forced: true, phase: "term" };
+        }
+
+        log.warn(`Worker ${worker.process.pid} ignored SIGTERM during ${reason}; sending SIGKILL.`);
+        killWorker(worker, "SIGKILL");
+        if (await waitForWorkerExit(worker, killMs)) {
+            return { forced: true, phase: "kill" };
+        }
+
+        throw new Error(`Worker ${worker.process.pid} did not exit during ${reason}`);
+    }
+
+    async function retireWorker(worker, options = {}) {
+        if (!worker) {
+            return { forced: false, phase: "already-exited" };
+        }
+
+        const existing = state.workerRetirementPromises.get(worker.id);
+        if (existing) {
+            return existing;
+        }
+
+        const retirementPromise = performWorkerRetirement(worker, options).finally(() => {
+            if (state.workerRetirementPromises.get(worker.id) === retirementPromise) {
+                state.workerRetirementPromises.delete(worker.id);
+            }
+        });
+        state.workerRetirementPromises.set(worker.id, retirementPromise);
+        return retirementPromise;
+    }
+
     function collectWorkerReplies(cmd, timeoutMs = 3000) {
         const workers = getWorkers();
         if (workers.length === 0) {
@@ -119,6 +287,7 @@ export function createLifecycle(state) {
         return new Promise((resolve) => {
             const replies = [];
             const handlers = new Map();
+            const repliedWorkerIds = new Set();
             let settled = false;
 
             const finish = () => {
@@ -141,6 +310,10 @@ export function createLifecycle(state) {
                     if (!msg || typeof msg !== "object" || msg.cmd !== cmd) {
                         return;
                     }
+                    if (repliedWorkerIds.has(worker.id)) {
+                        return;
+                    }
+                    repliedWorkerIds.add(worker.id);
                     replies.push({ pid: worker.process.pid, id: worker.id, ...msg });
                     if (replies.length === workers.length) {
                         finish();
@@ -154,15 +327,18 @@ export function createLifecycle(state) {
     }
 
     function broadcastWorkerCount() {
-        const count = getWorkerCount();
+        const count = getActiveWorkerCount();
         for (const worker of getWorkers()) {
             attachWorkerErrorHandler(worker);
-            sendToWorker(worker, { cmd: "cluster-count", count });
+            sendToWorker(worker, { cmd: "cluster-count", count, minWorkers, maxWorkers, mode });
         }
     }
 
     const handleWorkerOnline = (worker) => {
         attachWorkerErrorHandler(worker);
+        if (!state.workerRetirements.has(worker.id)) {
+            state.workerStates.set(worker.id, "online");
+        }
         log.info("Worker %o is online", worker.process.pid);
         broadcastWorkerCount();
         emitLifecycle("worker_online", {
@@ -185,7 +361,10 @@ export function createLifecycle(state) {
             state.workerLoads.set(worker.id, {
                 lag,
                 lastSeen: Date.now(),
-                memory,
+                memory: memory?.heapUsed,
+                rss: memory?.rss,
+                external: memory?.external,
+                arrayBuffers: memory?.arrayBuffers,
             });
         };
         state.workerMessageHandlers.set(worker.id, { worker, handler: messageHandler });
@@ -194,16 +373,19 @@ export function createLifecycle(state) {
 
     const handleWorkerExit = (worker, code, signal) => {
         const workerStartTime = state.workerStartTimes.get(worker.id);
+        const retirement = state.workerRetirements.get(worker.id);
         state.workerStartTimes.delete(worker.id);
         state.listeningWorkers.delete(worker.id);
         state.workerLoads.delete(worker.id);
+        state.workerStates.delete(worker.id);
+        state.workerRetirements.delete(worker.id);
 
         const tracked = state.workerMessageHandlers.get(worker.id);
         if (tracked) {
             tracked.worker.off("message", tracked.handler);
             state.workerMessageHandlers.delete(worker.id);
         }
-        const currentWorkers = getWorkerCount();
+        const currentWorkers = getActiveWorkerCount();
         emitLifecycle("worker_exit", {
             id: worker.id,
             pid: worker.process.pid,
@@ -212,22 +394,38 @@ export function createLifecycle(state) {
             workerCount: currentWorkers,
         });
 
-        if (worker.exitedAfterDisconnect) {
+        if (state.isShuttingDown) {
             return log.info(
-                `Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] disconnected voluntarily.`,
+                `Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] exited during cluster shutdown. Code: ${code}, Signal: ${signal}.`,
             );
         }
 
-        if (state.isShuttingDown) {
-            return log.info(
-                `Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] died. Code: ${code}, Signal: ${signal}.`,
+        if (retirement || worker.exitedAfterDisconnect) {
+            if (!retirement && mode === "smart") {
+                setDesiredWorkerCount(Math.max(minWorkers, currentWorkers));
+            }
+
+            log.info(
+                `Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] disconnected voluntarily.`,
             );
+            if (!norestart) {
+                ensureDesiredCapacity("restore desired capacity after worker retirement");
+            }
+            broadcastWorkerCount();
+            return;
         }
 
         if (norestart) {
             return log.warn(
                 `Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] died. Code: ${code}, Signal: ${signal}. Not restarting (norestart enabled).`,
             );
+        }
+
+        if (currentWorkers >= state.desiredWorkers) {
+            log.warn(
+                `Worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] died. Code: ${code}, Signal: ${signal}. Desired capacity is already satisfied.`,
+            );
+            return;
         }
 
         const workerUptimeMs = workerStartTime ? Date.now() - workerStartTime : 0;
@@ -257,8 +455,7 @@ export function createLifecycle(state) {
                 return;
             }
 
-            forkWorker("restart worker");
-            broadcastWorkerCount();
+            ensureDesiredCapacity("restart worker");
         }, restartDelay);
 
         state.pendingRestartTimers.add(restartTimer);
@@ -278,6 +475,9 @@ export function createLifecycle(state) {
 
     const handleWorkerListening = (worker, address) => {
         state.listeningWorkers.add(worker.id);
+        if (!state.workerRetirements.has(worker.id)) {
+            state.workerStates.set(worker.id, "listening");
+        }
         const currentWorkers = getWorkerCount();
         log.info(
             `A worker [${worker.process.pid}: ${currentWorkers} of ${maxWorkers}] is now connected to ${address.address}:${address.port}`,
@@ -307,7 +507,12 @@ export function createLifecycle(state) {
     return {
         getWorkers,
         getWorkerCount,
+        getActiveWorkers,
+        getActiveWorkerCount,
         forkWorker,
+        setDesiredWorkerCount,
+        ensureDesiredCapacity,
+        retireWorker,
         attachWorkerErrorHandler,
         sendToWorker,
         collectWorkerReplies,

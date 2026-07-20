@@ -30,25 +30,38 @@ import cluster from "node:cluster";
  * replacement of the active worker pool. For each snapshotted worker:
  *   1. Fork a replacement worker and wait for `online`.
  *   2. If the original was listening, wait for the replacement to listen.
- *   3. Send a `"shutdown"` IPC to the old worker; fall back to
- *      `worker.disconnect()` if the IPC channel is gone.
- *   4. Wait for the old worker to exit, with a forced disconnect on
- *      timeout.
+ *   3. Retire the old worker through the shared bounded shutdown path.
+ *   4. Verify the old process exited before moving to the next worker.
  *
- * Concurrent calls return the in-flight reload promise; calls during
- * shutdown reject immediately.
+ * Concurrent calls return the in-flight reload promise. Calls during shutdown
+ * reject immediately, and shutdown aborts any readiness wait in progress.
  *
  * @param {object} state - Shared cluster state.
  * @param {object} lifecycle - Lifecycle controller from createLifecycle().
- * @returns {{ reload: function(): Promise<void> }}
+ * @returns {{ reload: function(): Promise<void>, cancel: function(*=): void }}
  */
 export function createReload(state, lifecycle) {
     const { config, log } = state;
     const { reloadOnlineTimeout, reloadListeningTimeout, reloadDisconnectWait } = config;
 
-    function waitForWorkerListening(worker, timeoutMs = reloadListeningTimeout) {
+    function createAbortError(reason = "Cluster reload was aborted") {
+        const error = reason instanceof Error ? reason : new Error(String(reason));
+        error.name = "AbortError";
+        return error;
+    }
+
+    function throwIfAborted(signal) {
+        if (signal?.aborted) {
+            throw createAbortError(signal.reason);
+        }
+    }
+
+    function waitForWorkerListening(worker, signal, timeoutMs = reloadListeningTimeout) {
         if (!worker) {
             return Promise.reject(new Error("Cannot wait for listening: missing worker"));
+        }
+        if (signal?.aborted) {
+            return Promise.reject(createAbortError(signal.reason));
         }
         if (state.listeningWorkers.has(worker.id)) {
             return Promise.resolve();
@@ -72,6 +85,9 @@ export function createReload(state, lifecycle) {
 
             const cleanup = () => {
                 cluster.off("listening", onListening);
+                worker.off("disconnect", onDisconnect);
+                worker.off("exit", onExit);
+                signal?.removeEventListener("abort", onAbort);
                 clearTimeout(timeout);
             };
 
@@ -83,13 +99,47 @@ export function createReload(state, lifecycle) {
                 }
             };
 
+            const fail = (message) => {
+                if (!settled) {
+                    settled = true;
+                    cleanup();
+                    reject(new Error(message));
+                }
+            };
+
+            const onDisconnect = () =>
+                fail(`Replacement worker ${worker.process.pid} disconnected before listening`);
+            const onExit = (code, exitSignal) =>
+                fail(
+                    `Replacement worker ${worker.process.pid} exited before listening (code=${code}, signal=${exitSignal})`,
+                );
+            const onAbort = () => {
+                if (!settled) {
+                    settled = true;
+                    cleanup();
+                    reject(createAbortError(signal.reason));
+                }
+            };
+
             cluster.on("listening", onListening);
+            worker.once("disconnect", onDisconnect);
+            worker.once("exit", onExit);
+            signal?.addEventListener("abort", onAbort, { once: true });
+
+            if (state.listeningWorkers.has(worker.id)) {
+                onListening(worker);
+            } else if (worker.isDead()) {
+                onExit(null, "already-exited");
+            }
         });
     }
 
-    function waitForWorkerOnline(worker, timeoutMs = reloadOnlineTimeout) {
+    function waitForWorkerOnline(worker, signal, timeoutMs = reloadOnlineTimeout) {
         if (!worker) {
             return Promise.reject(new Error("Cannot wait for online: missing worker"));
+        }
+        if (signal?.aborted) {
+            return Promise.reject(createAbortError(signal.reason));
         }
 
         return new Promise((resolve, reject) => {
@@ -112,6 +162,7 @@ export function createReload(state, lifecycle) {
                 worker.off("online", onOnline);
                 worker.off("disconnect", onDisconnect);
                 worker.off("exit", onExit);
+                signal?.removeEventListener("abort", onAbort);
                 clearTimeout(timeout);
             };
 
@@ -147,68 +198,36 @@ export function createReload(state, lifecycle) {
                 }
             };
 
+            const onAbort = () => {
+                if (!settled) {
+                    settled = true;
+                    cleanup();
+                    reject(createAbortError(signal.reason));
+                }
+            };
+
             worker.on("online", onOnline);
             worker.on("disconnect", onDisconnect);
             worker.on("exit", onExit);
+            signal?.addEventListener("abort", onAbort, { once: true });
+
+            if (worker.isDead()) {
+                onExit(null, "already-exited");
+            }
         });
     }
 
-    function waitForWorkerExit(worker, timeoutMs = reloadDisconnectWait) {
-        if (!worker) {
-            return Promise.resolve("missing-worker");
-        }
-
-        if (worker.isDead()) {
-            return Promise.resolve("exit");
-        }
-
-        return new Promise((resolve) => {
-            let settled = false;
-
-            const cleanup = () => {
-                worker.off("exit", onExit);
-                clearTimeout(timeout);
-            };
-
-            const onExit = () => {
-                if (settled) {
-                    return;
-                }
-                settled = true;
-                cleanup();
-                resolve("exit");
-            };
-
-            const timeout = setTimeout(() => {
-                if (settled) {
-                    return;
-                }
-                settled = true;
-                cleanup();
-                log.warn(
-                    `Timed out waiting for worker ${worker.process.pid} to exit after ${timeoutMs}ms`,
-                );
-                resolve("timeout");
-            }, timeoutMs);
-            timeout.unref();
-
-            worker.on("exit", onExit);
-        });
-    }
-
-    async function performReload() {
+    async function performReload(signal) {
         log.info("Starting zero-downtime cluster reload...");
-        lifecycle.emitLifecycle("reload_start", { workerCount: lifecycle.getWorkerCount() });
+        lifecycle.emitLifecycle("reload_start", { workerCount: lifecycle.getActiveWorkerCount() });
 
         // Snapshot the current worker pool — the loop tolerates exits
         // mid-replace by skipping any snapshot entries that have already
         // left the cluster.workers map.
-        const workersToReplace = lifecycle.getWorkers();
+        const workersToReplace = lifecycle.getActiveWorkers();
 
         for (const oldWorker of workersToReplace) {
-            if (state.isShuttingDown) {
-                throw new Error("Reload aborted: cluster is shutting down");
-            }
+            throwIfAborted(signal);
 
             if (!cluster.workers[oldWorker.id]) {
                 log.info(
@@ -218,37 +237,41 @@ export function createReload(state, lifecycle) {
             }
 
             log.info("Spawning replacement worker...");
-            const newWorker = lifecycle.forkWorker("spawn replacement worker");
+            const newWorker = lifecycle.forkWorker("spawn replacement worker", {
+                allowSurge: true,
+            });
             if (!newWorker) {
                 throw new Error("Reload aborted: failed to spawn replacement worker");
             }
             lifecycle.attachWorkerErrorHandler(newWorker);
 
             try {
-                await waitForWorkerOnline(newWorker);
+                await waitForWorkerOnline(newWorker, signal);
             } catch (err) {
                 log.error(
                     `Reload aborted: replacement worker ${newWorker.process.pid} failed to come online.`,
                     err,
                 );
-                if (newWorker.isConnected()) {
-                    newWorker.disconnect();
-                }
+                await lifecycle.retireWorker(newWorker, {
+                    reason: "failed reload replacement",
+                    graceMs: 0,
+                });
                 throw err;
             }
 
             const shouldWaitForListening = state.listeningWorkers.has(oldWorker.id);
             if (shouldWaitForListening) {
                 try {
-                    await waitForWorkerListening(newWorker);
+                    await waitForWorkerListening(newWorker, signal);
                 } catch (err) {
                     log.error(
                         `Reload aborted: replacement worker ${newWorker.process.pid} failed readiness check.`,
                         err,
                     );
-                    if (newWorker.isConnected()) {
-                        newWorker.disconnect();
-                    }
+                    await lifecycle.retireWorker(newWorker, {
+                        reason: "unready reload replacement",
+                        graceMs: 0,
+                    });
                     throw err;
                 }
                 log.info(
@@ -260,79 +283,28 @@ export function createReload(state, lifecycle) {
                 );
             }
 
-            // Signal the old worker to shut down gracefully via IPC so it
-            // can run fastify.close() and tear down connections before the
-            // cluster disconnects it. Falls back to disconnect() if the
-            // message cannot be delivered.
-            if (oldWorker.isConnected()) {
-                try {
-                    oldWorker.send("shutdown", (err) => {
-                        if (err) {
-                            log.warn(
-                                `Failed to send shutdown to old worker ${oldWorker.process.pid}, falling back to disconnect:`,
-                                err,
-                            );
-                            try {
-                                oldWorker.disconnect();
-                            } catch (disconnectErr) {
-                                log.warn(
-                                    `Failed to disconnect old worker ${oldWorker.process.pid}:`,
-                                    disconnectErr,
-                                );
-                            }
-                        }
-                    });
-                } catch (err) {
-                    log.warn(
-                        `Failed to send shutdown to old worker ${oldWorker.process.pid}, falling back to disconnect:`,
-                        err,
-                    );
-                    try {
-                        oldWorker.disconnect();
-                    } catch (disconnectErr) {
-                        log.warn(
-                            `Failed to disconnect old worker ${oldWorker.process.pid}:`,
-                            disconnectErr,
-                        );
-                    }
-                }
-            } else {
-                try {
-                    oldWorker.disconnect();
-                } catch (err) {
-                    log.warn(`Failed to disconnect old worker ${oldWorker.process.pid}:`, err);
-                }
-            }
-
-            // Wait for the old worker process to fully exit so connections
-            // (Redis, Mongoose, etc.) are torn down before cycling the
-            // next worker.
-            const exitResult = await waitForWorkerExit(oldWorker);
-            if (exitResult === "timeout" && !oldWorker.isDead()) {
-                try {
-                    log.warn(`Forcing disconnect on unresponsive worker ${oldWorker.process.pid}`);
-                    oldWorker.disconnect();
-                } catch (err) {
-                    log.warn(
-                        `Failed to force disconnect old worker ${oldWorker.process.pid}:`,
-                        err,
-                    );
-                }
-            }
+            await lifecycle.retireWorker(oldWorker, {
+                reason: "rolling reload",
+                graceMs: reloadDisconnectWait,
+            });
+            throwIfAborted(signal);
         }
         log.info("Cluster reload complete.");
-        lifecycle.emitLifecycle("reload_end", { workerCount: lifecycle.getWorkerCount() });
+        lifecycle.emitLifecycle("reload_end", { workerCount: lifecycle.getActiveWorkerCount() });
     }
 
     async function reload() {
         if (state.isShuttingDown) {
-            return;
+            throw createAbortError("Reload rejected: cluster is shutting down");
         }
         if (state.reloadPromise) {
             return state.reloadPromise;
         }
 
-        state.reloadPromise = performReload()
+        const abortController = new AbortController();
+        state.reloadAbortController = abortController;
+        state.reloadPromise = Promise.resolve()
+            .then(() => performReload(abortController.signal))
             .catch((err) => {
                 lifecycle.emitLifecycle("reload_fail", {
                     error: err instanceof Error ? err.message : String(err),
@@ -340,11 +312,18 @@ export function createReload(state, lifecycle) {
                 throw err;
             })
             .finally(() => {
+                if (state.reloadAbortController === abortController) {
+                    state.reloadAbortController = null;
+                }
                 state.reloadPromise = undefined;
             });
 
         return state.reloadPromise;
     }
 
-    return { reload };
+    function cancel(reason = "Cluster reload cancelled") {
+        state.reloadAbortController?.abort(createAbortError(reason));
+    }
+
+    return { reload, cancel };
 }

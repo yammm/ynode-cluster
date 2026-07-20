@@ -2,7 +2,7 @@ import cluster from "node:cluster";
 
 import { run } from "../../src/cluster.js";
 
-run(
+const manager = run(
     () => {
         const keepAlive = setInterval(() => {}, 1000);
 
@@ -13,10 +13,12 @@ run(
                 cluster.worker.send({ cmd: "heartbeat", lag: 5, memory: 1024 });
             }, 100).unref();
 
-            setTimeout(() => {
-                cluster.worker.disconnect();
-                clearInterval(keepAlive);
-            }, 500).unref();
+            process.on("message", (message) => {
+                if (message === "shutdown") {
+                    clearInterval(keepAlive);
+                    cluster.worker.disconnect();
+                }
+            });
         }
     },
     {
@@ -26,3 +28,9 @@ run(
         enabled: true,
     },
 );
+
+if (cluster.isPrimary) {
+    setTimeout(() => {
+        void manager.close();
+    }, 500).unref();
+}

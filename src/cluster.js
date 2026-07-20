@@ -54,7 +54,7 @@ const HEARTBEAT_INTERVAL_MS = 2000;
 
 /**
  * Starts the per-worker heartbeat loop that reports event-loop lag and
- * heap usage to the master. Called inside worker processes only.
+ * memory usage to the master. Called inside worker processes only.
  * @param {object} log - Logger instance.
  */
 function startWorkerHeartbeat(log) {
@@ -72,13 +72,13 @@ function startWorkerHeartbeat(log) {
         const lag = now - lastCheck - HEARTBEAT_INTERVAL_MS;
         lastCheck = now;
 
-        const memory = process.memoryUsage();
+        const { heapUsed, rss, external, arrayBuffers } = process.memoryUsage();
 
         try {
             worker.send({
                 cmd: "heartbeat",
                 lag: Math.max(0, lag),
-                memory: memory.heapUsed, // Use heapUsed for primary scaling/monitoring
+                memory: { heapUsed, rss, external, arrayBuffers },
             });
         } catch (err) {
             // Ignore, channel probably closed
@@ -99,6 +99,14 @@ function startWorkerHeartbeat(log) {
  * @param {string} [options.mode="smart"] - "smart" (auto-scaling) or "max" (all cores).
  * @param {number} [options.scalingCooldown=10000] - Ms to wait between scaling actions.
  * @param {number} [options.scaleDownGrace=30000] - Ms to wait after scale-up before allowing scale-down.
+ * @param {number} [options.autoScaleInterval=5000] - Ms between capacity and health checks.
+ * @param {number} [options.heartbeatStaleAfter=10000] - Max heartbeat age used for scaling decisions.
+ * @param {string[]} [options.shutdownSignals] - Signals that initiate graceful primary shutdown.
+ * @param {number} [options.shutdownTimeout=10000] - Total graceful worker shutdown budget in ms.
+ * @param {number} [options.scaleUpMemory=0] - Average worker heap MB that triggers scale-up.
+ * @param {number} [options.scaleUpRss=0] - Average worker RSS MB that triggers scale-up.
+ * @param {number} [options.maxWorkerMemory=0] - Per-worker heap MB restart threshold.
+ * @param {number} [options.maxWorkerRss=0] - Per-worker RSS MB restart threshold.
  * @param {number} [options.reloadOnlineTimeout=10000] - Max ms to wait for replacement worker "online" during reload.
  * @param {number} [options.reloadListeningTimeout=10000] - Max ms to wait for replacement worker "listening" during reload.
  * @param {number} [options.reloadDisconnectWait=10000] - Max ms to wait for old worker to exit during each reload step.
@@ -158,12 +166,16 @@ export function run(startWorker, options = true, log = console) {
     tty.setup();
 
     const initialWorkers = config.mode === "max" ? config.maxWorkers : config.minWorkers;
+    lifecycle.setDesiredWorkerCount(initialWorkers);
     log.info(
         `Shogun is the master! Starting ${initialWorkers} workers (Max: ${config.maxWorkers}).`,
     );
 
-    for (let i = 0; i < initialWorkers; ++i) {
-        lifecycle.forkWorker("fork initial worker");
+    const startedWorkers = lifecycle.ensureDesiredCapacity("fork initial worker");
+    if (startedWorkers.length !== initialWorkers) {
+        log.warn(
+            `Started ${startedWorkers.length} of ${initialWorkers} requested initial workers; the capacity controller will keep retrying.`,
+        );
     }
     state.lastScaleUpTime = Date.now();
 

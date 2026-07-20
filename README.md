@@ -8,7 +8,7 @@ Copyright (c) 2025 Michael Welter <me@mikinho.com>
 
 `@ynode/cluster` removes the complexity of managing Node.js cluster processes. It provides out-of-the-box support for:
 
-- **Smart Auto-Scaling**: Automatically spawns and kills workers based on Event Loop Lag (CPU load).
+- **Smart Auto-Scaling**: Automatically adjusts the worker pool using event-loop lag, heap, and RSS thresholds.
 - **Resiliency**: Automatically restarts workers if they crash.
 - **Zero-Config Defaults**: Works immediately with sensible defaults, but fully configurable.
 
@@ -62,7 +62,9 @@ You can reload the cluster (e.g. after a code deployment) without dropping conne
 
 1. Sequentially start a new worker.
 2. Wait for it to come online, and if the old worker was serving traffic, wait for the replacement to become listening.
-3. Gracefully shut down the old worker.
+3. Gracefully shut down the old worker and verify that its process exits before continuing.
+
+Only one surge process is permitted during a reload. A replacement that exits or disconnects before readiness fails the reload immediately and is reaped without disturbing the original worker. Starting cluster shutdown cancels any active reload.
 
 ```js
 await control.reload();
@@ -78,17 +80,18 @@ The `run(startWorker, options)` function accepts the following options:
 | `enabled` | `boolean` | `true` | Whether to enable clustering. If `false`, runs `startWorker` directly in the main process. |
 | `mode` | `"smart" \| "max"` | `"smart"` | `"smart"` enables auto-scaling based on load. `"max"` spawns `maxWorkers` and keeps them running. |
 | `minWorkers` | `number` | `Math.min(2, os.availableParallelism())` | Minimum number of workers to keep alive in "smart" mode. |
-| `maxWorkers` | `number` | `os.availableParallelism()` | Maximum number of workers to spawn. |
+| `maxWorkers` | `number` | `os.availableParallelism()` | Maximum active workers; rolling reload may add one temporary surge process. |
 | `scaleUpThreshold` | `number` | `50` | Event loop lag (ms) threshold to trigger scaling up. |
 | `scaleDownThreshold` | `number` | `10` | Event loop lag (ms) threshold to trigger scaling down. |
 | `scalingCooldown` | `number` | `10000` | Minimum time (ms) between scaling actions. |
 | `scaleDownGrace` | `number` | `30000` | Grace period (ms) after scaling up before scaling down is allowed. |
-| `autoScaleInterval` | `number` | `5000` | Interval (ms) for auto-scaling checks in "smart" mode. |
-| `shutdownSignals` | `string[]` | `['SIGINT', 'SIGTERM', 'SIGQUIT']` | Signals to listen for to trigger graceful shutdown. |
+| `autoScaleInterval` | `number` | `5000` | Interval (ms) for capacity, health, and smart-mode scaling checks. |
+| `heartbeatStaleAfter` | `number` | `10000` | Maximum heartbeat age (ms) included in scaling decisions. |
+| `shutdownSignals` | `string[]` | `['SIGINT', 'SIGTERM', 'SIGQUIT']` on POSIX | Supported process signals that trigger graceful shutdown. |
 | `shutdownTimeout` | `number` | `10000` | Time (ms) to wait for workers to shut down before forced exit. |
 | `reloadOnlineTimeout` | `number` | `10000` | Max time (ms) to wait for replacement worker `online` during reload. |
 | `reloadListeningTimeout` | `number` | `10000` | Max time (ms) to wait for replacement worker `listening` when replacing a listening worker. |
-| `reloadDisconnectWait` | `number` | `2000` | Max time (ms) to wait for an old worker to disconnect during each reload step. |
+| `reloadDisconnectWait` | `number` | `10000` | Max time (ms) to wait for an old worker to exit gracefully during each reload step. |
 | `tty` | `object` | `{ enabled: false }` | Optional TTY command mode settings for interactive master commands. |
 | `tty.enabled` | `boolean` | `false` | Enables TTY command mode in the master process. |
 | `tty.commands` | `boolean` | `true` | Enables command handling when `tty.enabled` is true. |
@@ -97,15 +100,19 @@ The `run(startWorker, options)` function accepts the following options:
 | `tty.stdout` | `Writable` | `process.stdout` | Output stream used for TTY command mode. |
 | `tty.prompt` | `string` | _(none)_ | Optional prompt text shown by command mode. |
 | `scaleUpMemory` | `number` | `0` | Threshold (MB) for average heap usage to trigger scaling up. |
+| `scaleUpRss` | `number` | `0` | Threshold (MB) for average resident set size to trigger scaling up. |
 | `maxWorkerMemory` | `number` | `0` | Max heap usage (MB) for a worker before restart (Leak Protection). |
+| `maxWorkerRss` | `number` | `0` | Max resident set size (MB) for a worker before restart. |
 | `norestart` | `boolean` | `false` | If true, workers will not be restarted when they die. |
+
+The primary owns process-level termination signals. The first configured signal begins graceful shutdown; a repeated signal immediately kills the remaining workers and exits non-zero. `SIGQUIT` is graceful by default on POSIX. Worker retirement escalates from an IPC shutdown request to `SIGTERM` and finally `SIGKILL`, so the primary never reports a clean shutdown while descendants remain alive.
 
 ### TTY Command Mode
 
 When `tty.enabled` is set to `true`, the master process listens to `process.stdin` for operations. By default, the following commands are available:
 
 - `/rl` - Triggers a zero-downtime cluster reload (can be customized via `tty.reloadCommand`).
-- `/status` - Displays a live table of connected workers, including PID, uptime, load lag, memory consumption, and network listening status.
+- `/status` - Displays active/process/desired capacity plus each worker's state, PID, uptime, load lag, heap, RSS, and listening status.
 - `/ping` - Pings all active workers over IPC to ensure responsiveness.
 - `/version` - Gathers and prints the `appVersion` and Node.js version from all workers.
 
@@ -121,8 +128,12 @@ if (manager) {
     const metrics = manager.getMetrics();
     console.log(`Current Lag: ${metrics.avgLag.toFixed(2)}ms`);
     console.log(`Active Workers: ${metrics.workerCount}`);
+    console.log(`Worker Processes: ${metrics.processCount}`);
+    console.log(`Desired Workers: ${metrics.desiredWorkers}`);
 }
 ```
+
+`workerCount` excludes draining workers. `processCount` includes starting, draining, and the single temporary reload surge process. Per-worker metrics expose lifecycle state, listening/readiness state, heartbeat freshness, heap, RSS, external memory, and array-buffer usage.
 
 ### Lifecycle Events and Programmatic Shutdown
 
@@ -138,6 +149,8 @@ await manager.reload();
 await manager.close(); // graceful shutdown without sending OS signals
 ```
 
+`close()` settles only after every worker exits. If a process survives the full graceful/termination escalation, `close()` rejects rather than silently leaving an orphan.
+
 Available event names: `worker_online`, `worker_exit`, `worker_restart_scheduled`, `worker_listening`, `scale_up`, `scale_down`, `reload_start`, `reload_end`, `reload_fail`, `shutdown_start`, `shutdown_end`.
 
 ## Working with @ynode/autoshutdown
@@ -149,7 +162,7 @@ While `@ynode/cluster` manages the **pool size** based on overall system load (s
 - **@ynode/cluster**: "We are overloaded, add more workers!" or "We are effectively idle, remove the extra workers."
 - **@ynode/autoshutdown**: "I haven't received a request in 10 minutes, I should shut down to save memory."
 
-Using them together ensures optimal resource usage: responsive scaling for traffic spikes and aggressive cleanup for idle periods.
+Using them together ensures optimal resource usage: responsive scaling for traffic spikes and aggressive cleanup for idle periods. A voluntary idle exit can reduce a smart pool, but Cluster reconciles immediately when the exit would cross `minWorkers`. In `mode: "max"`, voluntary exits are replaced to preserve `maxWorkers`.
 
 ```javascript
 import { run } from "@ynode/cluster";

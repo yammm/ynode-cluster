@@ -4,6 +4,7 @@ import { run } from "../../src/cluster.js";
 
 const HIGH_HEAP_USED = 256 * 1024 * 1024;
 const SAFE_HEAP_USED = 8 * 1024 * 1024;
+const useRssLimit = process.env.CLUSTER_TEST_MEMORY_KIND === "rss";
 
 const manager = run(
     () => {
@@ -16,11 +17,12 @@ const manager = run(
 
         if (cluster.isWorker) {
             const heapUsed = cluster.worker.id === 1 ? HIGH_HEAP_USED : SAFE_HEAP_USED;
+            const rss = cluster.worker.id === 1 ? HIGH_HEAP_USED : SAFE_HEAP_USED;
             setTimeout(() => {
                 cluster.worker.send({
                     cmd: "heartbeat",
                     lag: 0,
-                    memory: { heapUsed },
+                    memory: { heapUsed, rss, external: 1024, arrayBuffers: 512 },
                 });
             }, 500).unref();
         }
@@ -29,7 +31,8 @@ const manager = run(
         mode: "smart",
         minWorkers: 1,
         maxWorkers: 1,
-        maxWorkerMemory: 128,
+        maxWorkerMemory: useRssLimit ? 0 : 128,
+        maxWorkerRss: useRssLimit ? 128 : 0,
         autoScaleInterval: 50,
         scalingCooldown: 0,
     },
@@ -49,7 +52,7 @@ if (manager) {
         }
 
         if (initialPid && pid && pid !== initialPid) {
-            console.log("OBJECT_MEMORY_RESTART");
+            console.log(useRssLimit ? "OBJECT_RSS_RESTART" : "OBJECT_MEMORY_RESTART");
             clearInterval(interval);
             process.exit(0);
             return;

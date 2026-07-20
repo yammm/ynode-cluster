@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 
-import { expectFixtureFailure, spawnFixture } from "./helpers/fixture-process.js";
+import { expectFixtureFailure, killFixture, spawnFixture } from "./helpers/fixture-process.js";
 
 describe("Cluster Integration", () => {
     it("should start master and workers", async () => {
@@ -20,7 +20,7 @@ describe("Cluster Integration", () => {
                     child.stdout?.removeAllListeners();
                     child.stderr?.removeAllListeners();
                     child.removeAllListeners();
-                    child.kill("SIGKILL");
+                    killFixture(child);
                 } catch (err) {
                     /* ignore */
                     console.debug(err);
@@ -98,7 +98,7 @@ it("should support null options by using default cluster settings", async () => 
                 child.stdout?.removeAllListeners();
                 child.stderr?.removeAllListeners();
                 child.removeAllListeners();
-                child.kill("SIGKILL");
+                killFixture(child);
             } catch (err) {
                 /* ignore */
                 console.debug(err);
@@ -172,7 +172,7 @@ it("should ignore malformed worker IPC messages", async () => {
         const timeout = setTimeout(() => {
             finish(() => {
                 try {
-                    child.kill("SIGKILL");
+                    killFixture(child);
                 } catch (err) {
                     console.debug(err);
                 }
@@ -275,6 +275,11 @@ const invalidConfigCases = [
         fixture: "invalid-duplicate-shutdown-signals-app.js",
         pattern:
             /Invalid configuration: shutdownSignals \(SIGTERM,SIGTERM\) must not contain duplicates/,
+    },
+    {
+        name: "should throw error on unsupported shutdown signals",
+        fixture: "invalid-unsupported-shutdown-signal-app.js",
+        pattern: /Invalid configuration: unsupported shutdown signal \(SIG_NOT_REAL\)/,
     },
     {
         name: "should throw error when startWorker is not a function",

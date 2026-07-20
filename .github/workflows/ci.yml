@@ -34,8 +34,8 @@ jobs:
             - name: Install dependencies
               run: npm ci
 
-            - name: Run lint and tests
-              run: npm test
+            - name: Run format, lint, and tests
+              run: npm run format:check && npm run lint && npm test
 
     docs:
         runs-on: ubuntu-latest

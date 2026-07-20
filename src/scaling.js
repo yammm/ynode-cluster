@@ -26,20 +26,22 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 import cluster from "node:cluster";
 
 /**
- * Creates the auto-scaling controller for smart mode. The control loop
+ * Creates the capacity and health controller. The control loop
  * fires every `autoScaleInterval` ms and:
- *   1. Enforces per-worker memory limits (`maxWorkerMemory`) by killing
- *      offending workers — this safety check runs even during reload.
- *   2. Skips scaling decisions while a reload is in flight (worker count
+ *   1. Restores desired capacity when restart policy permits it.
+ *   2. Enforces per-worker heap/RSS limits through the shared bounded
+ *      retirement path — this safety check runs even during cooldown/reload.
+ *   3. Skips scaling decisions while a reload is in flight (worker count
  *      is transiently inflated).
- *   3. Scales up when average event-loop lag exceeds `scaleUpThreshold`
- *      or average heap usage exceeds `scaleUpMemory`.
- *   4. Scales down by disconnecting the most-recently-added worker when
+ *   4. Scales up when average event-loop lag, heap, or RSS exceeds its
+ *      configured threshold.
+ *   5. Scales down by retiring the most-recently-added worker when
  *      average lag falls below `scaleDownThreshold`, gated by
  *      `scaleDownGrace` after the last scale-up.
  *
- * In `mode: "max"` no interval is created — the cluster runs at
- * `maxWorkers` and the controller is a no-op.
+ * In `mode: "max"`, desired-capacity reconciliation and worker memory limits
+ * remain active while load-based scaling decisions are naturally bounded by
+ * the fixed desired worker count.
  *
  * @param {object} state - Shared cluster state.
  * @param {object} lifecycle - Lifecycle controller from createLifecycle().
@@ -56,21 +58,31 @@ export function createScaling(state, lifecycle) {
         scalingCooldown,
         scaleDownGrace,
         autoScaleInterval,
+        heartbeatStaleAfter,
         scaleUpMemory,
+        scaleUpRss,
         maxWorkerMemory,
+        maxWorkerRss,
+        norestart,
     } = config;
 
     function tick() {
         const now = Date.now();
-        if (now - state.lastScalingAction < scalingCooldown) {
-            return;
+        if (!norestart && lifecycle.getActiveWorkerCount() < state.desiredWorkers) {
+            lifecycle.ensureDesiredCapacity("restore desired capacity during scaling check");
         }
 
-        // Calculate average lag across all workers
+        const freshLoads = [...state.workerLoads.entries()].filter(
+            ([id, stats]) =>
+                state.workerStates.get(id) !== "draining" &&
+                now - stats.lastSeen <= heartbeatStaleAfter,
+        );
+
+        // Calculate average lag across fresh, active workers.
         let totalLag = 0;
         let count = 0;
 
-        for (const stats of state.workerLoads.values()) {
+        for (const [, stats] of freshLoads) {
             totalLag += stats.lag;
             ++count;
         }
@@ -85,30 +97,45 @@ export function createScaling(state, lifecycle) {
         // Calculate Average Memory in MB
         let totalMemory = 0;
         let memorySamples = 0;
-        for (const stats of state.workerLoads.values()) {
+        let totalRss = 0;
+        let rssSamples = 0;
+        for (const [, stats] of freshLoads) {
             if (typeof stats.memory === "number") {
                 totalMemory += stats.memory;
                 ++memorySamples;
             }
+            if (typeof stats.rss === "number") {
+                totalRss += stats.rss;
+                ++rssSamples;
+            }
         }
         const avgMemoryMB = memorySamples > 0 ? totalMemory / memorySamples / 1024 / 1024 : 0;
+        const avgRssMB = rssSamples > 0 ? totalRss / rssSamples / 1024 / 1024 : 0;
 
-        const currentWorkers = lifecycle.getWorkerCount();
+        const currentWorkers = lifecycle.getActiveWorkerCount();
 
         // Leak Protection (Max Worker Memory) — runs even during reload.
-        if (maxWorkerMemory > 0) {
-            for (const [id, stats] of state.workerLoads.entries()) {
-                if (typeof stats.memory !== "number") {
-                    continue;
-                }
-                const memMB = stats.memory / 1024 / 1024;
-                if (memMB > maxWorkerMemory) {
-                    log.warn(
-                        `Worker ${id} exceeded memory limit (${memMB.toFixed(2)}MB > ${maxWorkerMemory}MB). Restarting...`,
-                    );
+        if (maxWorkerMemory > 0 || maxWorkerRss > 0) {
+            for (const [id, stats] of freshLoads) {
+                const heapMB = typeof stats.memory === "number" ? stats.memory / 1024 / 1024 : 0;
+                const rssMB = typeof stats.rss === "number" ? stats.rss / 1024 / 1024 : 0;
+                const heapExceeded = maxWorkerMemory > 0 && heapMB > maxWorkerMemory;
+                const rssExceeded = maxWorkerRss > 0 && rssMB > maxWorkerRss;
+                if (heapExceeded || rssExceeded) {
+                    const reason = rssExceeded
+                        ? `RSS ${rssMB.toFixed(2)}MB > ${maxWorkerRss}MB`
+                        : `heap ${heapMB.toFixed(2)}MB > ${maxWorkerMemory}MB`;
+                    log.warn(`Worker ${id} exceeded memory limit (${reason}). Restarting...`);
                     const worker = cluster.workers[id];
                     if (worker) {
-                        worker.kill();
+                        void lifecycle
+                            .retireWorker(worker, {
+                                reason: "memory limit",
+                                graceMs: 0,
+                            })
+                            .catch((err) => {
+                                log.error(`Failed to retire worker ${id} after memory limit:`, err);
+                            });
                     }
                     return; // Wait for exit handler to restart it.
                 }
@@ -123,21 +150,36 @@ export function createScaling(state, lifecycle) {
             return;
         }
 
+        if (now - state.lastScalingAction < scalingCooldown) {
+            return;
+        }
+
+        if (mode !== "smart") {
+            return;
+        }
+
         // Scale Up logic (Lag OR Memory)
         const shouldScaleUpLag = avgLag > scaleUpThreshold;
-        const shouldScaleUpMem = scaleUpMemory > 0 && avgMemoryMB > scaleUpMemory;
+        const shouldScaleUpHeap = scaleUpMemory > 0 && avgMemoryMB > scaleUpMemory;
+        const shouldScaleUpRss = scaleUpRss > 0 && avgRssMB > scaleUpRss;
 
-        if ((shouldScaleUpLag || shouldScaleUpMem) && currentWorkers < maxWorkers) {
-            const reason = shouldScaleUpMem
-                ? `High Memory (Avg: ${avgMemoryMB.toFixed(2)}MB)`
-                : `High Lag (Avg: ${avgLag.toFixed(2)}ms)`;
+        if (
+            (shouldScaleUpLag || shouldScaleUpHeap || shouldScaleUpRss) &&
+            currentWorkers < maxWorkers
+        ) {
+            const reason = shouldScaleUpRss
+                ? `High RSS (Avg: ${avgRssMB.toFixed(2)}MB)`
+                : shouldScaleUpHeap
+                  ? `High Heap (Avg: ${avgMemoryMB.toFixed(2)}MB)`
+                  : `High Lag (Avg: ${avgLag.toFixed(2)}ms)`;
 
             log.info(`${reason} detected. Scaling up...`);
-            const scaledWorker = lifecycle.forkWorker("scale up");
-            if (scaledWorker) {
+            lifecycle.setDesiredWorkerCount(currentWorkers + 1);
+            const scaledWorkers = lifecycle.ensureDesiredCapacity("scale up");
+            if (scaledWorkers.length > 0) {
                 lifecycle.emitLifecycle("scale_up", {
                     reason,
-                    workerCount: currentWorkers + 1,
+                    workerCount: lifecycle.getActiveWorkerCount(),
                 });
             }
             state.lastScaleUpTime = Date.now();
@@ -154,13 +196,27 @@ export function createScaling(state, lifecycle) {
 
             log.info(`Low load detected (Avg Lag: ${avgLag.toFixed(2)}ms). Scaling down...`);
             const workers = lifecycle.getWorkers();
-            const victim = workers[workers.length - 1];
+            const victim = workers.findLast(
+                (worker) => state.workerStates.get(worker.id) !== "draining",
+            );
             if (victim) {
-                victim.disconnect();
+                lifecycle.setDesiredWorkerCount(currentWorkers - 1);
+                void lifecycle
+                    .retireWorker(victim, {
+                        reason: "scale down",
+                        graceMs: config.shutdownTimeout,
+                    })
+                    .catch((err) => {
+                        log.error(
+                            `Failed to retire worker ${victim.process.pid} during scale down:`,
+                            err,
+                        );
+                        lifecycle.ensureDesiredCapacity("recover failed scale down");
+                    });
                 lifecycle.emitLifecycle("scale_down", {
                     workerId: victim.id,
                     workerPid: victim.process.pid,
-                    workerCount: currentWorkers - 1,
+                    workerCount: lifecycle.getActiveWorkerCount(),
                 });
                 state.lastScalingAction = now;
             }
@@ -168,9 +224,6 @@ export function createScaling(state, lifecycle) {
     }
 
     function start() {
-        if (mode !== "smart") {
-            return;
-        }
         state.autoScaleTimer = setInterval(tick, autoScaleInterval);
         state.autoScaleTimer.unref();
     }

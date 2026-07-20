@@ -12,8 +12,26 @@ export function spawnFixture(fixtureName, options = {}) {
     return spawn("node", [getFixturePath(fixtureName)], {
         stdio,
         env: { ...process.env, ...env },
+        detached: process.platform !== "win32",
         ...rest,
     });
+}
+
+export function killFixture(child, signal = "SIGKILL") {
+    if (!child?.pid) {
+        return;
+    }
+    if (process.platform !== "win32") {
+        try {
+            process.kill(-child.pid, signal);
+            return;
+        } catch (err) {
+            if (err?.code !== "ESRCH") {
+                throw err;
+            }
+        }
+    }
+    child.kill(signal);
 }
 
 export async function expectFixtureFailure(fixtureName, stderrPattern, { timeoutMs = 10000 } = {}) {
@@ -42,7 +60,7 @@ export async function expectFixtureFailure(fixtureName, stderrPattern, { timeout
         const timeout = setTimeout(() => {
             finish(() => {
                 try {
-                    child.kill("SIGKILL");
+                    killFixture(child);
                 } catch (err) {
                     console.debug(err);
                 }
@@ -80,10 +98,10 @@ export async function expectFixtureFailure(fixtureName, stderrPattern, { timeout
 
 export async function runFixtureWithOutput(
     fixtureName,
-    { timeoutMs = 10000, onStdout, onStderr } = {},
+    { timeoutMs = 10000, onStdout, onStderr, env = {} } = {},
 ) {
     return new Promise((resolve, reject) => {
-        const child = spawnFixture(fixtureName);
+        const child = spawnFixture(fixtureName, { env });
         let output = "";
         let settled = false;
 
@@ -106,7 +124,7 @@ export async function runFixtureWithOutput(
         const timeout = setTimeout(() => {
             finish(() => {
                 try {
-                    child.kill("SIGKILL");
+                    killFixture(child);
                 } catch (err) {
                     console.debug(err);
                 }

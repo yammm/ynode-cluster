@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import http from "node:http";
 import { describe, it } from "node:test";
 
-import { runFixtureWithOutput, spawnFixture } from "./helpers/fixture-process.js";
+import { killFixture, runFixtureWithOutput, spawnFixture } from "./helpers/fixture-process.js";
 
 describe("Memory Scaling", () => {
     it("should restart worker on memory leak", async () => {
@@ -22,7 +22,11 @@ describe("Memory Scaling", () => {
             const cleanup = (signal = "SIGTERM") => {
                 clearTimeout(timeout);
                 try {
-                    child.kill(signal);
+                    if (signal === "SIGKILL") {
+                        killFixture(child);
+                    } else {
+                        child.kill(signal);
+                    }
                 } catch (err) {
                     console.debug(err);
                 }
@@ -107,5 +111,15 @@ describe("Memory Scaling", () => {
 
         assert.equal(code, 0, "Object-form heartbeat should trigger restart. Output:\n" + output);
         assert.match(output, /OBJECT_MEMORY_RESTART/);
+    });
+
+    it("should restart worker when its RSS exceeds maxWorkerRss", async () => {
+        const { code, output } = await runFixtureWithOutput("object-memory-restart-app.js", {
+            timeoutMs: 4000,
+            env: { CLUSTER_TEST_MEMORY_KIND: "rss" },
+        });
+
+        assert.equal(code, 0, "RSS heartbeat should trigger restart. Output:\n" + output);
+        assert.match(output, /OBJECT_RSS_RESTART/);
     });
 });

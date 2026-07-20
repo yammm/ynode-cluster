@@ -27,6 +27,9 @@ import os from "node:os";
 
 export const DEFAULT_TTY_RELOAD_COMMAND = "/rl";
 const VALID_MODES = new Set(["smart", "max"]);
+const DEFAULT_SHUTDOWN_SIGNALS = ["SIGINT", "SIGTERM", "SIGQUIT"].filter((signal) =>
+    Object.hasOwn(os.constants.signals ?? {}, signal),
+);
 
 const NUMERIC_CONFIG_KEYS = [
     "minWorkers",
@@ -36,9 +39,12 @@ const NUMERIC_CONFIG_KEYS = [
     "scalingCooldown",
     "scaleDownGrace",
     "autoScaleInterval",
+    "heartbeatStaleAfter",
     "shutdownTimeout",
     "scaleUpMemory",
+    "scaleUpRss",
     "maxWorkerMemory",
+    "maxWorkerRss",
     "reloadOnlineTimeout",
     "reloadListeningTimeout",
     "reloadDisconnectWait",
@@ -48,9 +54,12 @@ const NON_NEGATIVE_NUMERIC_CONFIG_KEYS = [
     "scalingCooldown",
     "scaleDownGrace",
     "autoScaleInterval",
+    "heartbeatStaleAfter",
     "shutdownTimeout",
     "scaleUpMemory",
+    "scaleUpRss",
     "maxWorkerMemory",
+    "maxWorkerRss",
 ];
 
 /**
@@ -111,10 +120,13 @@ export function buildClusterConfig(options) {
         scalingCooldown: 10000,
         scaleDownGrace: 30000,
         autoScaleInterval: 5000,
-        shutdownSignals: ["SIGINT", "SIGTERM", "SIGQUIT"],
+        heartbeatStaleAfter: 10000,
+        shutdownSignals: [...DEFAULT_SHUTDOWN_SIGNALS],
         shutdownTimeout: 10000,
         scaleUpMemory: 0,
+        scaleUpRss: 0,
         maxWorkerMemory: 0,
+        maxWorkerRss: 0,
         norestart: false,
         reloadOnlineTimeout: 10000,
         reloadListeningTimeout: 10000,
@@ -235,6 +247,14 @@ export function validateClusterConfig(config) {
         );
     }
 
+    const supportedSignals = os.constants.signals ?? {};
+    const invalidSignal = config.shutdownSignals.find(
+        (signal) => !Object.hasOwn(supportedSignals, signal),
+    );
+    if (invalidSignal) {
+        throw new Error(`Invalid configuration: unsupported shutdown signal (${invalidSignal})`);
+    }
+
     if (!Number.isInteger(config.minWorkers) || config.minWorkers < 1) {
         throw new Error(
             `Invalid configuration: minWorkers (${config.minWorkers}) must be an integer >= 1`,
@@ -250,6 +270,12 @@ export function validateClusterConfig(config) {
     if (config.autoScaleInterval <= 0) {
         throw new Error(
             `Invalid configuration: autoScaleInterval (${config.autoScaleInterval}) must be greater than 0`,
+        );
+    }
+
+    if (config.heartbeatStaleAfter <= 0) {
+        throw new Error(
+            `Invalid configuration: heartbeatStaleAfter (${config.heartbeatStaleAfter}) must be greater than 0`,
         );
     }
 

@@ -16,7 +16,7 @@ export interface ClusterTtyOptions {
 
     /**
      * Command that triggers cluster reload.
-     * Default: "rl".
+     * Default: "/rl".
      */
     reloadCommand?: string;
 
@@ -95,10 +95,16 @@ export interface ClusterOptions {
     autoScaleInterval?: number;
 
     /**
+     * Maximum age (ms) of a heartbeat used for scaling decisions.
+     * Default: 10000.
+     */
+    heartbeatStaleAfter?: number;
+
+    /**
      * Signals to listen for to trigger graceful shutdown.
      * Default: ["SIGINT", "SIGTERM", "SIGQUIT"].
      */
-    shutdownSignals?: string[];
+    shutdownSignals?: NodeJS.Signals[];
 
     /**
      * Time (ms) to wait for workers to shutdown before forced exit.
@@ -113,10 +119,22 @@ export interface ClusterOptions {
     scaleUpMemory?: number;
 
     /**
+     * Threshold (MB) for average RSS to trigger scaling up.
+     * Default: 0 (disabled).
+     */
+    scaleUpRss?: number;
+
+    /**
      * Maximum heap usage (MB) for a single worker before it is restarted (Leak Protection).
      * Default: 0 (disabled).
      */
     maxWorkerMemory?: number;
+
+    /**
+     * Maximum RSS (MB) for a single worker before it is restarted.
+     * Default: 0 (disabled).
+     */
+    maxWorkerRss?: number;
 
     /**
      * If true, workers will not be restarted when they die.
@@ -138,7 +156,7 @@ export interface ClusterOptions {
 
     /**
      * Time (ms) to wait for old worker disconnect during each reload step.
-     * Default: 2000.
+     * Default: 10000.
      */
     reloadDisconnectWait?: number;
 
@@ -172,9 +190,15 @@ export interface ClusterEvent {
 export interface WorkerMetrics {
     id: number;
     pid?: number;
-    lag: number;
+    state: "starting" | "online" | "listening" | "draining";
+    listening: boolean;
+    lag?: number;
     memory?: number;
-    lastSeen: number;
+    rss?: number;
+    external?: number;
+    arrayBuffers?: number;
+    lastSeen?: number;
+    stale: boolean;
     uptime?: number;
 }
 
@@ -185,7 +209,11 @@ export interface ClusterMetrics {
     workers: WorkerMetrics[];
     totalLag: number;
     avgLag: number;
+    /** Active workers, excluding workers currently draining. */
     workerCount: number;
+    /** Total OS worker processes, including a reload surge or draining worker. */
+    processCount: number;
+    desiredWorkers: number;
     maxWorkers: number;
     minWorkers: number;
     scaleUpThreshold: number;

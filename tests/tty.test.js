@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 
-import { spawnFixture } from "./helpers/fixture-process.js";
+import { killFixture, spawnFixture } from "./helpers/fixture-process.js";
 
 describe("TTY Command Mode", () => {
     it("should handle reload commands and ignore duplicate reload trigger", async () => {
@@ -67,7 +67,7 @@ describe("TTY Command Mode", () => {
             const timeout = setTimeout(() => {
                 finish(() => {
                     try {
-                        child.kill("SIGKILL");
+                        killFixture(child);
                     } catch (err) {
                         console.debug(err);
                     }
@@ -146,7 +146,7 @@ describe("TTY Command Mode", () => {
             const timeout = setTimeout(() => {
                 finish(() => {
                     try {
-                        child.kill("SIGKILL");
+                        killFixture(child);
                     } catch (err) {
                         console.debug(err);
                     }

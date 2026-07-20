@@ -33,19 +33,20 @@ import { EventEmitter } from "node:events";
  *
  * Fields:
  *   - config, log, ttyConfig — immutable references resolved at boot.
- *   - workerLoads — Map<workerId, {lag, lastSeen, memory}>.
+ *   - workerLoads — Map<workerId, heartbeat lag/heap/RSS metadata>.
  *   - workerStartTimes — Map<workerId, ms epoch>.
  *   - workerMessageHandlers — Map<workerId, {worker, handler}>.
  *   - listeningWorkers — Set<workerId>.
+ *   - workerStates — Map<workerId, starting|online|listening|draining>.
+ *   - workerRetirements / workerRetirementPromises — bounded retirement state.
  *   - workersWithErrorHandler — WeakSet<worker>.
  *   - signalHandlers — Map<signal, handler>.
  *   - events — EventEmitter exposed via the public manager.on/off API.
- *   - isShuttingDown, lastScalingAction, lastScaleUpTime,
+ *   - isShuttingDown, desiredWorkers, lastScalingAction, lastScaleUpTime,
  *     consecutiveCrashRestarts — scalar mutation targets.
- *   - autoScaleTimer, forceExitTimer, ttyReadline — handles cleared on
- *     shutdown.
- *   - closePromise, reloadPromise — one-shot promises that serialize
- *     concurrent close/reload requests.
+ *   - autoScaleTimer, ttyReadline — handles cleared on shutdown.
+ *   - closePromise, reloadPromise, reloadAbortController — serialized and
+ *     cancellable close/reload operations.
  *
  * @param {object} args
  * @param {object} args.config - Validated cluster configuration.
@@ -64,16 +65,20 @@ export function createState({ config, log, ttyConfig }) {
         workerStartTimes: new Map(),
         workerMessageHandlers: new Map(),
         listeningWorkers: new Set(),
+        workerStates: new Map(),
+        workerRetirements: new Map(),
+        workerRetirementPromises: new Map(),
         workersWithErrorHandler: new WeakSet(),
         signalHandlers: new Map(),
         lastScalingAction: Date.now(),
         lastScaleUpTime: Date.now(),
         consecutiveCrashRestarts: 0,
         autoScaleTimer: null,
-        forceExitTimer: null,
         pendingRestartTimers: new Set(),
+        desiredWorkers: 0,
         closePromise: null,
         reloadPromise: null,
+        reloadAbortController: null,
         ttyReadline: null,
         events: new EventEmitter(),
     };

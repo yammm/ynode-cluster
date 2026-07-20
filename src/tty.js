@@ -47,7 +47,7 @@ export function createTty(state, lifecycle, reload) {
         const now = Date.now();
         const workers = lifecycle.getWorkers();
         const lines = [
-            `Master uptime: ${formatUptime(now - state.masterStartTime)}  |  Mode: ${mode}  |  Workers: ${workers.length} (${minWorkers}–${maxWorkers})`,
+            `Master uptime: ${formatUptime(now - state.masterStartTime)}  |  Mode: ${mode}  |  Active: ${lifecycle.getActiveWorkerCount()}  |  Processes: ${workers.length}  |  Desired: ${state.desiredWorkers} (${minWorkers}–${maxWorkers})`,
         ];
 
         if (workers.length === 0) {
@@ -55,17 +55,19 @@ export function createTty(state, lifecycle, reload) {
             return lines.join("\n") + "\n";
         }
 
-        lines.push("  PID      Uptime       Lag     Memory     Listening");
-        lines.push("  ───      ──────       ───     ──────     ─────────");
+        lines.push("  PID      State       Uptime       Lag     Heap       RSS        Listening");
+        lines.push("  ───      ─────       ──────       ───     ────       ───        ─────────");
         for (const worker of workers) {
             const startTime = state.workerStartTimes.get(worker.id);
             const uptime = startTime ? formatUptime(now - startTime) : "—";
             const load = state.workerLoads.get(worker.id);
             const lag = load ? `${load.lag}ms` : "—";
-            const mem = load ? formatMemoryMB(load.memory) : "—";
+            const stateName = state.workerStates.get(worker.id) ?? "starting";
+            const heap = load ? formatMemoryMB(load.memory) : "—";
+            const rss = load ? formatMemoryMB(load.rss) : "—";
             const listening = state.listeningWorkers.has(worker.id) ? "yes" : "no";
             lines.push(
-                `  ${String(worker.process.pid).padEnd(9)}${uptime.padEnd(13)}${lag.padEnd(8)}${mem.padEnd(11)}${listening}`,
+                `  ${String(worker.process.pid).padEnd(9)}${stateName.padEnd(12)}${uptime.padEnd(13)}${lag.padEnd(8)}${heap.padEnd(11)}${rss.padEnd(11)}${listening}`,
             );
         }
 

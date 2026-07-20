@@ -23,17 +23,13 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-import cluster from "node:cluster";
-
 /**
- * Creates the shutdown controller — orchestrates graceful disconnect of
- * the worker pool and master event-loop teardown.
+ * Creates the shutdown controller. Every worker receives a graceful IPC
+ * request, followed by SIGTERM and SIGKILL escalation when required.
  *
  * `closeCluster()` is idempotent; concurrent calls return the in-flight
- * shutdown promise. Signal handlers registered by `attachSignalHandlers()`
- * call `closeCluster({ signal, exitOnTimeout: true, exitOnComplete: true })`
- * so the master process exits cleanly even if a worker hangs past
- * `shutdownTimeout`.
+ * shutdown promise. A second configured termination signal bypasses the
+ * graceful budget, kills remaining workers, and exits non-zero.
  *
  * @param {object} state - Shared cluster state.
  * @param {object} lifecycle - Lifecycle controller.
@@ -47,59 +43,19 @@ export function createShutdown(state, lifecycle, hooks = {}) {
     const { config, log } = state;
     const { shutdownSignals, shutdownTimeout } = config;
 
-    function disconnectWorkersForShutdown() {
-        function disconnectWorker(worker) {
-            try {
-                worker.disconnect();
-            } catch (err) {
-                log.debug(`Failed to disconnect worker ${worker.process.pid}:`, err);
-            }
-        }
-
+    function forceKillWorkers(reason) {
         for (const worker of lifecycle.getWorkers()) {
-            lifecycle.attachWorkerErrorHandler(worker);
-            if (!worker.isConnected()) {
-                disconnectWorker(worker);
-                continue;
-            }
-
-            let disconnected = false;
-            const disconnectOnce = () => {
-                if (disconnected) {
-                    return;
-                }
-                disconnected = true;
-                disconnectWorker(worker);
-            };
-
-            const fallbackTimer = setTimeout(disconnectOnce, 50);
-            fallbackTimer.unref();
-
+            state.workerStates.set(worker.id, "draining");
+            state.workerRetirements.set(worker.id, { reason, startedAt: Date.now() });
             try {
-                worker.send("shutdown", (err) => {
-                    if (err) {
-                        log.debug(
-                            `Failed to send shutdown message to worker ${worker.process.pid}:`,
-                            err,
-                        );
-                        disconnectOnce();
-                    }
-                    clearTimeout(fallbackTimer);
-                });
+                worker.kill("SIGKILL");
             } catch (err) {
-                clearTimeout(fallbackTimer);
-                log.debug(`Failed to send shutdown message to worker ${worker.process.pid}:`, err);
-                disconnectOnce();
+                log.warn(`Failed to force kill worker ${worker.process.pid}:`, err);
             }
         }
     }
 
-    function closeCluster({ signal = null, exitOnTimeout = false, exitOnComplete = false } = {}) {
-        if (state.closePromise) {
-            return state.closePromise;
-        }
-
-        state.isShuttingDown = true;
+    function runBeforeShutdown() {
         if (typeof hooks.beforeShutdown === "function") {
             try {
                 hooks.beforeShutdown();
@@ -107,68 +63,89 @@ export function createShutdown(state, lifecycle, hooks = {}) {
                 log.warn(`Error in beforeShutdown hook:`, err);
             }
         }
+    }
+
+    function finishShutdown() {
+        removeSignalHandlers();
+        lifecycle.removeClusterEvents();
+        if (typeof hooks.afterShutdown === "function") {
+            try {
+                hooks.afterShutdown();
+            } catch (err) {
+                log.warn(`Error in afterShutdown hook:`, err);
+            }
+        }
+    }
+
+    function closeCluster({ signal = null, exitOnComplete = false } = {}) {
+        if (state.closePromise) {
+            return state.closePromise;
+        }
+
+        state.isShuttingDown = true;
+        state.reloadAbortController?.abort(new Error("Reload aborted: cluster is shutting down"));
+        runBeforeShutdown();
+
+        const performShutdown = async () => {
+            const graceMs = Math.max(0, shutdownTimeout - 2000);
+            const retirements = lifecycle.getWorkers().map((worker) =>
+                lifecycle.retireWorker(worker, {
+                    reason: signal ? `shutdown after ${signal}` : "programmatic shutdown",
+                    graceMs,
+                }),
+            );
+            const results = await Promise.allSettled(retirements);
+            const failures = results
+                .filter((result) => result.status === "rejected")
+                .map((result) => result.reason);
+
+            if (state.reloadPromise) {
+                try {
+                    await state.reloadPromise;
+                } catch (err) {
+                    if (err?.name !== "AbortError") {
+                        log.warn("Reload failed while cluster shutdown was in progress:", err);
+                    }
+                }
+            }
+
+            if (lifecycle.getWorkerCount() > 0) {
+                forceKillWorkers("final shutdown cleanup");
+                failures.push(
+                    new Error(
+                        `${lifecycle.getWorkerCount()} worker(s) remained after shutdown escalation`,
+                    ),
+                );
+            }
+
+            finishShutdown();
+            lifecycle.emitLifecycle("shutdown_end", {
+                workerCount: lifecycle.getActiveWorkerCount(),
+                forced: results.some(
+                    (result) => result.status === "fulfilled" && result.value.forced,
+                ),
+            });
+
+            if (failures.length > 0) {
+                throw new AggregateError(failures, "Cluster shutdown did not complete cleanly");
+            }
+        };
+        state.closePromise = Promise.resolve().then(performShutdown);
         lifecycle.emitLifecycle("shutdown_start", {
             signal,
-            workerCount: lifecycle.getWorkerCount(),
+            workerCount: lifecycle.getActiveWorkerCount(),
         });
 
-        state.closePromise = new Promise((resolve) => {
-            let settled = false;
-
-            const finish = () => {
-                if (settled) {
-                    return;
-                }
-                settled = true;
-                cluster.off("exit", onWorkerExitForClose);
-                if (state.forceExitTimer) {
-                    clearTimeout(state.forceExitTimer);
-                    state.forceExitTimer = undefined;
-                }
-                removeSignalHandlers();
-                lifecycle.removeClusterEvents();
-                if (typeof hooks.afterShutdown === "function") {
-                    try {
-                        hooks.afterShutdown();
-                    } catch (err) {
-                        log.warn(`Error in afterShutdown hook:`, err);
-                    }
-                }
-                lifecycle.emitLifecycle("shutdown_end", {
-                    workerCount: lifecycle.getWorkerCount(),
-                });
-                if (exitOnComplete) {
-                    process.exit(0);
-                    return;
-                }
-                resolve();
-            };
-
-            const onWorkerExitForClose = () => {
-                if (lifecycle.getWorkerCount() === 0) {
-                    finish();
-                }
-            };
-
-            cluster.on("exit", onWorkerExitForClose);
-            disconnectWorkersForShutdown();
-            onWorkerExitForClose();
-
-            if (!settled && shutdownTimeout > 0) {
-                state.forceExitTimer = setTimeout(() => {
-                    if (settled) {
-                        return;
-                    }
-                    if (exitOnTimeout) {
-                        log.warn(`Master force exiting after ${shutdownTimeout / 1000}s timeout.`);
-                        process.exit(0);
-                        return;
-                    }
-                    finish();
-                }, shutdownTimeout);
-                state.forceExitTimer.unref();
-            }
-        });
+        if (exitOnComplete) {
+            void state.closePromise.then(
+                () => process.exit(0),
+                (err) => {
+                    log.error("Cluster shutdown failed:", err);
+                    forceKillWorkers("failed cluster shutdown");
+                    process.exit(1);
+                },
+            );
+        }
 
         return state.closePromise;
     }
@@ -182,8 +159,14 @@ export function createShutdown(state, lifecycle, hooks = {}) {
                 continue;
             }
             const handler = () => {
+                if (state.closePromise) {
+                    log.warn(`Master received ${signal} again; forcing immediate shutdown.`);
+                    forceKillWorkers(`second ${signal}`);
+                    process.exit(1);
+                    return;
+                }
                 log.info(`Master received ${signal}, shutting down workers...`);
-                closeCluster({ signal, exitOnTimeout: true, exitOnComplete: true });
+                closeCluster({ signal, exitOnComplete: true });
             };
             state.signalHandlers.set(signal, handler);
             process.on(signal, handler);

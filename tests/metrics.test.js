@@ -20,10 +20,22 @@ describe("Metrics API", () => {
         const json = JSON.parse(line.split("METRICS_JSON:")[1]);
         assert.equal(typeof json.avgLag, "number");
         assert.equal(typeof json.workerCount, "number");
+        assert.equal(typeof json.processCount, "number");
+        assert.equal(typeof json.desiredWorkers, "number");
         assert.ok(json.workerCount >= 2, "Should have at least 2 workers");
+        assert.ok(json.processCount >= json.workerCount);
+        assert.equal(json.desiredWorkers, 2);
         assert.ok(Array.isArray(json.workers));
         assert.equal(json.workers.length, json.workerCount);
         for (const worker of json.workers) {
+            assert.match(worker.state, /^(starting|online|listening|draining)$/);
+            assert.equal(typeof worker.listening, "boolean");
+            assert.equal(typeof worker.stale, "boolean");
+            assert.equal(typeof worker.memory, "number");
+            assert.equal(typeof worker.rss, "number");
+            assert.equal(typeof worker.external, "number");
+            assert.equal(typeof worker.arrayBuffers, "number");
+            assert.equal(typeof worker.lastSeen, "number");
             assert.equal(typeof worker.uptime, "number");
             assert.ok(worker.uptime >= 0, "Expected uptime >= 0");
         }

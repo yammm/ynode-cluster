@@ -21,7 +21,18 @@ if (manager) {
     const startedAt = Date.now();
     const interval = setInterval(() => {
         const metrics = manager.getMetrics();
-        const ready = metrics.workerCount >= 2 && metrics.workers.length === metrics.workerCount;
+        const ready =
+            metrics.workerCount >= 2 &&
+            metrics.workers.length === metrics.workerCount &&
+            metrics.workers.every(
+                (worker) =>
+                    typeof worker.memory === "number" &&
+                    typeof worker.rss === "number" &&
+                    typeof worker.external === "number" &&
+                    typeof worker.arrayBuffers === "number" &&
+                    typeof worker.lastSeen === "number" &&
+                    worker.stale === false,
+            );
 
         if (ready) {
             console.log("METRICS_JSON:" + JSON.stringify(metrics));

@@ -23,8 +23,6 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-import cluster from "node:cluster";
-
 /**
  * Builds the public manager object returned by run(). The surface is
  * unchanged from prior versions:
@@ -44,7 +42,7 @@ import cluster from "node:cluster";
  *   - `reload_end`           { workerCount }
  *   - `reload_fail`          { error }
  *   - `shutdown_start`       { signal, workerCount }
- *   - `shutdown_end`         { workerCount }
+ *   - `shutdown_end`         { workerCount, forced }
  *
  * @param {object} state - Shared cluster state.
  * @param {object} lifecycle - Lifecycle controller.
@@ -54,28 +52,45 @@ import cluster from "node:cluster";
  */
 export function createManager(state, lifecycle, reload, shutdown) {
     const { config, events } = state;
-    const { maxWorkers, minWorkers, scaleUpThreshold, scaleDownThreshold, mode } = config;
+    const {
+        maxWorkers,
+        minWorkers,
+        scaleUpThreshold,
+        scaleDownThreshold,
+        heartbeatStaleAfter,
+        mode,
+    } = config;
 
     const manager = {
         getMetrics: () => {
-            const currentWorkers = lifecycle.getWorkerCount();
+            const now = Date.now();
+            const currentWorkers = lifecycle.getActiveWorkerCount();
             let totalLag = 0;
             let count = 0;
             const workersData = [];
 
-            for (const [id, stats] of state.workerLoads.entries()) {
-                totalLag += stats.lag;
-                ++count;
+            for (const worker of lifecycle.getWorkers()) {
+                const stats = state.workerLoads.get(worker.id);
+                const stale = !stats || now - stats.lastSeen > heartbeatStaleAfter;
+                if (stats && !stale && state.workerStates.get(worker.id) !== "draining") {
+                    totalLag += stats.lag;
+                    ++count;
+                }
 
-                const worker = cluster.workers[id];
-                const workerStartTime = state.workerStartTimes.get(id);
+                const workerStartTime = state.workerStartTimes.get(worker.id);
                 workersData.push({
-                    id,
-                    pid: worker?.process.pid,
-                    lag: stats.lag,
-                    memory: stats.memory,
-                    lastSeen: stats.lastSeen,
-                    uptime: workerStartTime ? Date.now() - workerStartTime : undefined,
+                    id: worker.id,
+                    pid: worker.process.pid,
+                    state: state.workerStates.get(worker.id) ?? "starting",
+                    listening: state.listeningWorkers.has(worker.id),
+                    lag: stats?.lag,
+                    memory: stats?.memory,
+                    rss: stats?.rss,
+                    external: stats?.external,
+                    arrayBuffers: stats?.arrayBuffers,
+                    lastSeen: stats?.lastSeen,
+                    stale,
+                    uptime: workerStartTime ? now - workerStartTime : undefined,
                 });
             }
 
@@ -86,6 +101,8 @@ export function createManager(state, lifecycle, reload, shutdown) {
                 totalLag,
                 avgLag,
                 workerCount: currentWorkers,
+                processCount: lifecycle.getWorkerCount(),
+                desiredWorkers: state.desiredWorkers,
                 maxWorkers,
                 minWorkers,
                 scaleUpThreshold,
