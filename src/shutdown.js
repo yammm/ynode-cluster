@@ -42,6 +42,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 export function createShutdown(state, lifecycle, hooks = {}) {
     const { config, log } = state;
     const { shutdownSignals, shutdownTimeout } = config;
+    let shutdownSignalReceived = false;
+    let exitOnCompleteAttached = false;
 
     function forceKillWorkers(reason) {
         for (const worker of lifecycle.getWorkers()) {
@@ -77,8 +79,26 @@ export function createShutdown(state, lifecycle, hooks = {}) {
         }
     }
 
+    function exitWhenComplete(shutdownPromise) {
+        if (exitOnCompleteAttached) {
+            return;
+        }
+        exitOnCompleteAttached = true;
+        void shutdownPromise.then(
+            () => process.exit(0),
+            (err) => {
+                log.error("Cluster shutdown failed:", err);
+                forceKillWorkers("failed cluster shutdown");
+                process.exit(1);
+            },
+        );
+    }
+
     function closeCluster({ signal = null, exitOnComplete = false } = {}) {
         if (state.closePromise) {
+            if (exitOnComplete) {
+                exitWhenComplete(state.closePromise);
+            }
             return state.closePromise;
         }
 
@@ -137,14 +157,7 @@ export function createShutdown(state, lifecycle, hooks = {}) {
         });
 
         if (exitOnComplete) {
-            void state.closePromise.then(
-                () => process.exit(0),
-                (err) => {
-                    log.error("Cluster shutdown failed:", err);
-                    forceKillWorkers("failed cluster shutdown");
-                    process.exit(1);
-                },
-            );
+            exitWhenComplete(state.closePromise);
         }
 
         return state.closePromise;
@@ -159,13 +172,18 @@ export function createShutdown(state, lifecycle, hooks = {}) {
                 continue;
             }
             const handler = () => {
-                if (state.closePromise) {
+                if (shutdownSignalReceived) {
                     log.warn(`Master received ${signal} again; forcing immediate shutdown.`);
                     forceKillWorkers(`second ${signal}`);
                     process.exit(1);
                     return;
                 }
-                log.info(`Master received ${signal}, shutting down workers...`);
+                shutdownSignalReceived = true;
+                if (state.closePromise) {
+                    log.info(`Master received ${signal}, joining the in-progress shutdown...`);
+                } else {
+                    log.info(`Master received ${signal}, shutting down workers...`);
+                }
                 closeCluster({ signal, exitOnComplete: true });
             };
             state.signalHandlers.set(signal, handler);

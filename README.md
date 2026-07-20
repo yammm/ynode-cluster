@@ -1,6 +1,6 @@
 # @ynode/cluster
 
-Copyright (c) 2025 Michael Welter <me@mikinho.com>
+Copyright (c) 2026 Michael Welter <me@mikinho.com>
 
 [![npm version](https://img.shields.io/npm/v/@ynode/cluster.svg)](https://www.npmjs.com/package/@ynode/cluster) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -23,6 +23,8 @@ npm install @ynode/cluster
 Simply wrap your application startup logic in the `run()` function.
 
 ```javascript
+import cluster from "node:cluster";
+
 import { run } from "@ynode/cluster";
 import Fastify from "fastify";
 
@@ -31,6 +33,17 @@ const startServer = async () => {
     const app = Fastify({ logger: true });
 
     app.get("/", async () => "Hello from worker " + process.pid);
+    process.on("message", (message) => {
+        if (message === "shutdown") {
+            void app.close().then(
+                () => process.exit(0),
+                (err) => {
+                    app.log.error(err);
+                    process.exit(1);
+                },
+            );
+        }
+    });
 
     try {
         await app.listen({ port: 3000 });
@@ -47,13 +60,15 @@ const control = run(startServer, {
     maxWorkers: 4,
 });
 
-// Access metrics
-setInterval(() => {
-    console.log(control.getMetrics());
-}, 5000);
+if (cluster.isPrimary) {
+    // Manager APIs are available in the primary process only.
+    setInterval(() => {
+        console.log(control.getMetrics());
+    }, 5000);
 
-// Trigger zero-downtime reload (e.g., on SIGHUP or API call)
-// control.reload();
+    // Trigger zero-downtime reload (e.g., on SIGHUP or API call)
+    // await control.reload();
+}
 ```
 
 ### Zero-Downtime Reload
@@ -67,8 +82,10 @@ You can reload the cluster (e.g. after a code deployment) without dropping conne
 Only one surge process is permitted during a reload. A replacement that exits or disconnects before readiness fails the reload immediately and is reaped without disturbing the original worker. Starting cluster shutdown cancels any active reload.
 
 ```js
-await control.reload();
-console.log("Reload complete!");
+if (cluster.isPrimary) {
+    await control.reload();
+    console.log("Reload complete!");
+}
 ```
 
 ## Configuration
@@ -85,7 +102,7 @@ The `run(startWorker, options)` function accepts the following options:
 | `scaleDownThreshold` | `number` | `10` | Event loop lag (ms) threshold to trigger scaling down. |
 | `scalingCooldown` | `number` | `10000` | Minimum time (ms) between scaling actions. |
 | `scaleDownGrace` | `number` | `30000` | Grace period (ms) after scaling up before scaling down is allowed. |
-| `autoScaleInterval` | `number` | `5000` | Interval (ms) for capacity, health, and smart-mode scaling checks. |
+| `autoScaleInterval` | `number` | `5000` | Interval (ms) for capacity and smart-mode load-scaling checks. |
 | `heartbeatStaleAfter` | `number` | `10000` | Maximum heartbeat age (ms) included in scaling decisions. |
 | `shutdownSignals` | `string[]` | `['SIGINT', 'SIGTERM', 'SIGQUIT']` on POSIX | Supported process signals that trigger graceful shutdown. |
 | `shutdownTimeout` | `number` | `10000` | Time (ms) to wait for workers to shut down before forced exit. |
@@ -96,16 +113,16 @@ The `run(startWorker, options)` function accepts the following options:
 | `tty.enabled` | `boolean` | `false` | Enables TTY command mode in the master process. |
 | `tty.commands` | `boolean` | `true` | Enables command handling when `tty.enabled` is true. |
 | `tty.reloadCommand` | `string` | `"/rl"` | Command text that triggers a zero-downtime reload. |
-| `tty.stdin` | `Readable` | `process.stdin` | Input stream used for TTY command mode. |
+| `tty.stdin` | `Readable` | `process.stdin` | Input stream used for TTY command mode; commands start only when `isTTY === true`. |
 | `tty.stdout` | `Writable` | `process.stdout` | Output stream used for TTY command mode. |
 | `tty.prompt` | `string` | _(none)_ | Optional prompt text shown by command mode. |
 | `scaleUpMemory` | `number` | `0` | Threshold (MB) for average heap usage to trigger scaling up. |
 | `scaleUpRss` | `number` | `0` | Threshold (MB) for average resident set size to trigger scaling up. |
-| `maxWorkerMemory` | `number` | `0` | Max heap usage (MB) for a worker before restart (Leak Protection). |
-| `maxWorkerRss` | `number` | `0` | Max resident set size (MB) for a worker before restart. |
+| `maxWorkerMemory` | `number` | `0` | Max heap usage (MB) for a worker before restart, evaluated on each heartbeat. |
+| `maxWorkerRss` | `number` | `0` | Max resident set size (MB) for a worker before restart, evaluated on each heartbeat. |
 | `norestart` | `boolean` | `false` | If true, workers will not be restarted when they die. |
 
-The primary owns process-level termination signals. The first configured signal begins graceful shutdown; a repeated signal immediately kills the remaining workers and exits non-zero. `SIGQUIT` is graceful by default on POSIX. Worker retirement escalates from an IPC shutdown request to `SIGTERM` and finally `SIGKILL`, so the primary never reports a clean shutdown while descendants remain alive.
+The primary owns process-level termination signals. The first configured signal begins or joins graceful shutdown; any later configured signal immediately kills the remaining workers and exits non-zero. `SIGQUIT` is graceful by default on POSIX. Worker retirement escalates from an IPC shutdown request to `SIGTERM` and finally `SIGKILL`, so the primary never reports a clean shutdown while descendants remain alive.
 
 ### TTY Command Mode
 
@@ -124,7 +141,7 @@ The `run()` function returns a `ClusterManager` instance (when in cluster mode) 
 const manager = run(startWorker, { mode: "smart" });
 
 // In your monitoring loop or API endpoint:
-if (manager) {
+if (cluster.isPrimary) {
     const metrics = manager.getMetrics();
     console.log(`Current Lag: ${metrics.avgLag.toFixed(2)}ms`);
     console.log(`Active Workers: ${metrics.workerCount}`);
@@ -142,11 +159,13 @@ The returned manager also provides lifecycle events and a programmatic close API
 ```javascript
 const manager = run(startWorker, { mode: "smart" });
 
-manager.on("scale_up", (event) => console.log("Scaled up:", event));
-manager.on("reload_fail", (event) => console.error("Reload failed:", event.error));
+if (cluster.isPrimary) {
+    manager.on("scale_up", (event) => console.log("Scaled up:", event));
+    manager.on("reload_fail", (event) => console.error("Reload failed:", event.error));
 
-await manager.reload();
-await manager.close(); // graceful shutdown without sending OS signals
+    await manager.reload();
+    await manager.close(); // graceful shutdown without sending OS signals
+}
 ```
 
 `close()` settles only after every worker exits. If a process survives the full graceful/termination escalation, `close()` rejects rather than silently leaving an orphan.

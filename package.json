@@ -4,7 +4,11 @@
     "description": "Smart, resource-aware Node.js cluster manager with bounded reload and shutdown orchestration.",
     "main": "src/cluster.js",
     "exports": {
-        ".": "./src/cluster.js"
+        ".": {
+            "types": "./index.d.ts",
+            "import": "./src/cluster.js",
+            "default": "./src/cluster.js"
+        }
     },
     "types": "./index.d.ts",
     "type": "module",

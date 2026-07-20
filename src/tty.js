@@ -42,6 +42,9 @@ const TTY_BUILTIN_COMMANDS = ["/status", "/ping", "/version"];
 export function createTty(state, lifecycle, reload) {
     const { config, log, ttyConfig } = state;
     const { minWorkers, maxWorkers, mode } = config;
+    let interfaceErrorHandler;
+    let outputErrorHandler;
+    let attachedOutput;
 
     function buildStatusOutput() {
         const now = Date.now();
@@ -119,12 +122,24 @@ export function createTty(state, lifecycle, reload) {
         }
     }
 
-    function close() {
-        if (!state.ttyReadline) {
-            return;
-        }
-        state.ttyReadline.close();
+    function cleanup() {
+        const readlineInterface = state.ttyReadline;
         state.ttyReadline = undefined;
+        if (readlineInterface && interfaceErrorHandler) {
+            readlineInterface.off("error", interfaceErrorHandler);
+        }
+        if (attachedOutput && outputErrorHandler && typeof attachedOutput.off === "function") {
+            attachedOutput.off("error", outputErrorHandler);
+        }
+        interfaceErrorHandler = undefined;
+        outputErrorHandler = undefined;
+        attachedOutput = undefined;
+        return readlineInterface;
+    }
+
+    function close() {
+        const readlineInterface = cleanup();
+        readlineInterface?.close();
     }
 
     function setup() {
@@ -147,6 +162,24 @@ export function createTty(state, lifecycle, reload) {
             output: commandOutput,
             terminal: true,
         });
+        interfaceErrorHandler = (err) => {
+            log.error("TTY input stream failed; disabling command mode.", err);
+            close();
+        };
+        state.ttyReadline.on("error", interfaceErrorHandler);
+
+        if (
+            commandOutput !== commandInput &&
+            typeof commandOutput.on === "function" &&
+            typeof commandOutput.off === "function"
+        ) {
+            attachedOutput = commandOutput;
+            outputErrorHandler = (err) => {
+                log.error("TTY output stream failed; disabling command mode.", err);
+                close();
+            };
+            attachedOutput.on("error", outputErrorHandler);
+        }
         log.info(`TTY command mode enabled. Type '${reloadCommand}' to reload workers.`);
 
         const showPrompt = () => {
@@ -156,39 +189,34 @@ export function createTty(state, lifecycle, reload) {
             }
         };
 
-        state.ttyReadline.on("line", async (line) => {
+        const handleLine = async (line) => {
             const command = line.trim();
 
             if (command === reloadCommand) {
                 if (state.reloadPromise) {
                     log.info("TTY: reload already in progress.");
-                    showPrompt();
                     return;
                 }
 
                 log.info("TTY: reload command received.");
-                reload.reload().catch((err) => {
+                void reload.reload().catch((err) => {
                     log.error("TTY: reload command failed.", err);
                 });
-                showPrompt();
                 return;
             }
 
             if (command === "/status") {
                 commandOutput.write(buildStatusOutput());
-                showPrompt();
                 return;
             }
 
             if (command === "/ping") {
                 await handleTtyPing(commandOutput);
-                showPrompt();
                 return;
             }
 
             if (command === "/version") {
                 await handleTtyVersion(commandOutput);
-                showPrompt();
                 return;
             }
 
@@ -196,16 +224,25 @@ export function createTty(state, lifecycle, reload) {
                 const allCommands = [...new Set([reloadCommand, ...TTY_BUILTIN_COMMANDS])];
                 commandOutput.write(`TTY commands: ${allCommands.join(", ")}\n`);
             }
+        };
+
+        state.ttyReadline.on("line", (line) => {
+            void handleLine(line)
+                .then(showPrompt)
+                .catch((err) => {
+                    log.error("TTY command failed; disabling command mode.", err);
+                    close();
+                });
+        });
+
+        state.ttyReadline.on("close", cleanup);
+
+        try {
             showPrompt();
-        });
-
-        state.ttyReadline.on("close", () => {
-            if (state.ttyReadline) {
-                state.ttyReadline = undefined;
-            }
-        });
-
-        showPrompt();
+        } catch (err) {
+            log.error("TTY prompt failed; disabling command mode.", err);
+            close();
+        }
     }
 
     return {

@@ -1,12 +1,37 @@
-import { resolve } from "node:path";
+import cluster from "node:cluster";
+import http from "node:http";
 
-import ynodeCluster from "../src/plugin.js";
+import { run } from "../src/cluster.js";
 
-// Initialize a robust, auto-scaling, zero-downtime cluster
-// This will spawn worker processes pointing to a target Fastify application file.
-ynodeCluster({
-    app: () => import(resolve(process.cwd(), "./example/worker.js")),
-    workers: 2, // Start with a strict 2 process baseline
-    autoScale: true,
-    autoRestart: true,
-});
+const manager = run(
+    () => {
+        const server = http.createServer((_request, response) => {
+            response.end(`Hello from worker ${process.pid}\n`);
+        });
+        server.on("error", (err) => {
+            console.error("Worker server failed", err);
+            process.exit(1);
+        });
+
+        process.on("message", (message) => {
+            if (message === "shutdown") {
+                server.close(() => process.exit(0));
+            }
+        });
+
+        server.listen(Number(process.env.PORT ?? 3000));
+        return server;
+    },
+    {
+        mode: "smart",
+        minWorkers: 2,
+        maxWorkers: 4,
+    },
+);
+
+if (cluster.isPrimary) {
+    manager.on("reload_end", () => console.log("Reload complete"));
+    process.on("SIGHUP", () => {
+        void manager.reload().catch((err) => console.error("Reload failed", err));
+    });
+}

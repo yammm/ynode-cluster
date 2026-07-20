@@ -5,7 +5,73 @@ import { describe, it } from "node:test";
 
 import { createLifecycle } from "../src/lifecycle.js";
 import { createReload } from "../src/reload.js";
+import { createShutdown } from "../src/shutdown.js";
 import { runFixtureWithOutput } from "./helpers/fixture-process.js";
+
+function createFakeWorker(id, pid = 10000 + id) {
+    const worker = new EventEmitter();
+    worker.id = id;
+    worker.process = { pid };
+    worker.isConnected = () => true;
+    worker.isDead = () => false;
+    worker.send = (_payload, callback) => callback?.();
+    worker.kill = () => {};
+    return worker;
+}
+
+function installClusterWorkers(t, workers, fork) {
+    const originalFork = cluster.fork;
+    const originalWorkers = { ...cluster.workers };
+    for (const id of Object.keys(cluster.workers)) {
+        delete cluster.workers[id];
+    }
+    for (const worker of workers) {
+        cluster.workers[worker.id] = worker;
+    }
+    if (fork) {
+        cluster.fork = fork;
+    }
+
+    t.after(() => {
+        cluster.fork = originalFork;
+        for (const id of Object.keys(cluster.workers)) {
+            delete cluster.workers[id];
+        }
+        Object.assign(cluster.workers, originalWorkers);
+    });
+}
+
+function createLifecycleState({
+    desiredWorkers = 1,
+    maxWorkers = 2,
+    maxWorkerMemory = 0,
+    maxWorkerRss = 0,
+} = {}) {
+    return {
+        config: {
+            maxWorkers,
+            minWorkers: 1,
+            mode: "smart",
+            norestart: false,
+            shutdownTimeout: 100,
+            maxWorkerMemory,
+            maxWorkerRss,
+        },
+        log: { debug() {}, info() {}, warn() {}, error() {} },
+        events: new EventEmitter(),
+        desiredWorkers,
+        isShuttingDown: false,
+        workerLoads: new Map(),
+        workerStartTimes: new Map(),
+        workerMessageHandlers: new Map(),
+        listeningWorkers: new Set(),
+        workerStates: new Map(),
+        workerRetirements: new Map(),
+        workerRetirementPromises: new Map(),
+        workersWithErrorHandler: new WeakSet(),
+        pendingRestartTimers: new Set(),
+    };
+}
 
 function isProcessAlive(pid) {
     try {
@@ -35,6 +101,169 @@ async function waitForProcessesToExit(pids, timeoutMs = 1000) {
 }
 
 describe("Lifecycle hardening", () => {
+    it("allows a reload surge while another worker is draining", (t) => {
+        const first = createFakeWorker(9101);
+        const second = createFakeWorker(9102);
+        const draining = createFakeWorker(9103);
+        const replacement = createFakeWorker(9104);
+        installClusterWorkers(t, [first, second, draining], () => {
+            cluster.workers[replacement.id] = replacement;
+            return replacement;
+        });
+
+        const state = createLifecycleState({ desiredWorkers: 2, maxWorkers: 2 });
+        state.workerStates.set(first.id, "listening");
+        state.workerStates.set(second.id, "listening");
+        state.workerStates.set(draining.id, "draining");
+        const lifecycle = createLifecycle(state);
+
+        const forked = lifecycle.forkWorker("spawn replacement worker", { allowSurge: true });
+
+        assert.strictEqual(forked, replacement);
+        assert.strictEqual(state.workerStates.get(replacement.id), "starting");
+        assert.strictEqual(lifecycle.getActiveWorkerCount(), 3);
+        assert.strictEqual(lifecycle.getWorkerCount(), 4);
+    });
+
+    it("treats pending restart timers as reserved worker capacity", (t) => {
+        const active = createFakeWorker(9201);
+        let nextId = 9202;
+        let forks = 0;
+        installClusterWorkers(t, [active], () => {
+            const worker = createFakeWorker(nextId++);
+            cluster.workers[worker.id] = worker;
+            ++forks;
+            return worker;
+        });
+
+        const state = createLifecycleState({ desiredWorkers: 2, maxWorkers: 2 });
+        state.workerStates.set(active.id, "listening");
+        const reservation = {};
+        state.pendingRestartTimers.add(reservation);
+        const lifecycle = createLifecycle(state);
+
+        const reservedWorkers = lifecycle.ensureDesiredCapacity("reconcile during restart backoff");
+
+        assert.strictEqual(reservedWorkers.length, 0);
+        assert.strictEqual(forks, 0);
+
+        state.pendingRestartTimers.delete(reservation);
+        const restartedWorkers = lifecycle.ensureDesiredCapacity("restart worker");
+
+        assert.strictEqual(restartedWorkers.length, 1);
+        assert.strictEqual(forks, 1);
+        assert.strictEqual(lifecycle.getActiveWorkerCount(), 2);
+    });
+
+    it("keeps master-attributed identity on worker IPC replies", async (t) => {
+        const worker = createFakeWorker(9301, 19301);
+        worker.send = (payload, callback) => {
+            callback?.();
+            setImmediate(() => {
+                worker.emit("message", { cmd: payload.cmd, pid: 1, id: 9999 });
+            });
+        };
+        installClusterWorkers(t, [worker]);
+        const lifecycle = createLifecycle(createLifecycleState());
+
+        const replies = await lifecycle.collectWorkerReplies("ping", 100);
+
+        assert.strictEqual(replies.length, 1);
+        assert.strictEqual(replies[0].pid, worker.process.pid);
+        assert.strictEqual(replies[0].id, worker.id);
+    });
+
+    it("retires only one memory-limit offender at a time", async (t) => {
+        const first = createFakeWorker(9351, 19351);
+        const second = createFakeWorker(9352, 19352);
+        installClusterWorkers(t, [first, second]);
+        const state = createLifecycleState({
+            desiredWorkers: 2,
+            maxWorkers: 2,
+            maxWorkerMemory: 1,
+        });
+        const lifecycle = createLifecycle(state);
+        lifecycle.attachClusterEvents();
+        t.after(lifecycle.removeClusterEvents);
+        cluster.emit("online", first);
+        cluster.emit("online", second);
+
+        const heartbeat = {
+            cmd: "heartbeat",
+            lag: 0,
+            memory: { heapUsed: 2 * 1024 * 1024 },
+        };
+        first.emit("message", heartbeat);
+        second.emit("message", heartbeat);
+
+        assert.strictEqual(state.workerStates.get(first.id), "draining");
+        assert.strictEqual(state.workerStates.get(second.id), "online");
+        assert.strictEqual(state.workerRetirementPromises.size, 1);
+
+        first.emit("exit", 0, null);
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.strictEqual(state.workerRetirementPromises.size, 0);
+
+        second.emit("message", heartbeat);
+        assert.strictEqual(state.workerStates.get(second.id), "draining");
+        second.emit("exit", 0, null);
+        await new Promise((resolve) => setImmediate(resolve));
+    });
+
+    it("lets the first signal join a programmatic close", async (t) => {
+        const worker = createFakeWorker(9401, 19401);
+        const killSignals = [];
+        worker.kill = (signal) => killSignals.push(signal);
+        let workers = [worker];
+        let resolveRetirement;
+        const retirement = new Promise((resolve) => {
+            resolveRetirement = resolve;
+        });
+        const exitCodes = [];
+        const originalExit = process.exit;
+        process.exit = (code) => exitCodes.push(code);
+        t.after(() => {
+            process.exit = originalExit;
+        });
+
+        const state = {
+            config: { shutdownSignals: ["SIGTERM"], shutdownTimeout: 100 },
+            log: { debug() {}, info() {}, warn() {}, error() {} },
+            isShuttingDown: false,
+            closePromise: null,
+            reloadAbortController: null,
+            reloadPromise: null,
+            signalHandlers: new Map(),
+            workerStates: new Map(),
+            workerRetirements: new Map(),
+        };
+        const lifecycle = {
+            getWorkers: () => workers,
+            getWorkerCount: () => workers.length,
+            getActiveWorkerCount: () => workers.length,
+            retireWorker: () => retirement,
+            removeClusterEvents() {},
+            emitLifecycle() {},
+        };
+        const shutdown = createShutdown(state, lifecycle);
+        shutdown.attachSignalHandlers();
+        t.after(shutdown.removeSignalHandlers);
+
+        const closePromise = shutdown.closeCluster();
+        state.signalHandlers.get("SIGTERM")();
+
+        assert.deepStrictEqual(killSignals, []);
+        assert.deepStrictEqual(exitCodes, []);
+
+        workers = [];
+        resolveRetirement({ forced: false, phase: "graceful" });
+        await closePromise;
+        await new Promise((resolve) => setImmediate(resolve));
+
+        assert.deepStrictEqual(killSignals, []);
+        assert.deepStrictEqual(exitCodes, [0]);
+    });
+
     it("reduces desired smart-pool capacity after a voluntary exit above the floor", async () => {
         const { code, output } = await runFixtureWithOutput("voluntary-scale-down-app.js", {
             timeoutMs: 5000,
@@ -204,6 +433,37 @@ describe("Lifecycle hardening", () => {
         } finally {
             delete cluster.workers[oldWorker.id];
         }
+    });
+
+    it("does not mutate an Error supplied when cancelling reload", async () => {
+        const state = {
+            config: {
+                reloadOnlineTimeout: 5000,
+                reloadListeningTimeout: 5000,
+                reloadDisconnectWait: 5000,
+            },
+            log: { info() {}, warn() {}, error() {}, debug() {} },
+            isShuttingDown: false,
+            listeningWorkers: new Set(),
+            reloadPromise: null,
+            reloadAbortController: null,
+        };
+        const lifecycle = {
+            getActiveWorkers: () => [createFakeWorker(9501, 19501)],
+            getActiveWorkerCount: () => 1,
+            emitLifecycle() {},
+        };
+        const reload = createReload(state, lifecycle);
+        const reason = new Error("operator cancelled reload");
+
+        const reloadPromise = reload.reload();
+        reload.cancel(reason);
+
+        await assert.rejects(
+            reloadPromise,
+            (err) => err.name === "AbortError" && err.cause === reason,
+        );
+        assert.strictEqual(reason.name, "Error");
     });
 
     it("isolates synchronous and asynchronous lifecycle listener failures", async () => {

@@ -33,7 +33,8 @@ const manager = run(
         maxWorkers: 1,
         maxWorkerMemory: useRssLimit ? 0 : 128,
         maxWorkerRss: useRssLimit ? 128 : 0,
-        autoScaleInterval: 50,
+        autoScaleInterval: 5000,
+        heartbeatStaleAfter: 10,
         scalingCooldown: 0,
     },
 );

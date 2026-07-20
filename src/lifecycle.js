@@ -36,9 +36,9 @@ function normalizeHeartbeatMemory(memory) {
         return { heapUsed: memory };
     }
 
-    // Workers running an older heartbeat format may still send the full
-    // process.memoryUsage() object. Accept it transparently and pull out
-    // heapUsed so the master-side scaling math stays consistent.
+    // Current workers send the full process.memoryUsage() object. Accept it
+    // while retaining the numeric heap-only format handled above for workers
+    // running an older release during a rolling upgrade.
     if (memory !== null && typeof memory === "object" && Number.isFinite(memory.heapUsed)) {
         return {
             heapUsed: memory.heapUsed,
@@ -69,7 +69,7 @@ function normalizeHeartbeatMemory(memory) {
  */
 export function createLifecycle(state) {
     const { config, log, events } = state;
-    const { maxWorkers, minWorkers, mode, norestart } = config;
+    const { maxWorkers, minWorkers, mode, norestart, maxWorkerMemory, maxWorkerRss } = config;
 
     const getWorkers = () => Object.values(cluster.workers).filter(Boolean);
     const getWorkerCount = () => getWorkers().length;
@@ -93,12 +93,14 @@ export function createLifecycle(state) {
         }
     }
 
-    function forkWorker(context, { allowSurge = false } = {}) {
+    function forkWorker(context, { allowSurge = false, allowDrainingOverlap = false } = {}) {
         const desiredWorkers = state.desiredWorkers > 0 ? state.desiredWorkers : maxWorkers;
         const processLimit = Math.min(maxWorkers, desiredWorkers) + (allowSurge ? 1 : 0);
-        if (getWorkerCount() >= processLimit) {
+        const countedWorkers =
+            allowSurge || allowDrainingOverlap ? getActiveWorkerCount() : getWorkerCount();
+        if (countedWorkers >= processLimit) {
             log.debug(
-                `Skipping ${context}: process limit ${processLimit} reached (${getWorkerCount()} running).`,
+                `Skipping ${context}: process limit ${processLimit} reached (${countedWorkers} counted, ${getWorkerCount()} running).`,
             );
             return null;
         }
@@ -118,14 +120,18 @@ export function createLifecycle(state) {
         return state.desiredWorkers;
     }
 
-    function ensureDesiredCapacity(context = "reconcile worker capacity") {
+    function ensureDesiredCapacity(
+        context = "reconcile worker capacity",
+        { allowSurge = false, allowDrainingOverlap = allowSurge } = {},
+    ) {
         if (state.isShuttingDown) {
             return [];
         }
 
         const workers = [];
-        while (getActiveWorkerCount() < state.desiredWorkers) {
-            const worker = forkWorker(context);
+        const pendingRestarts = state.pendingRestartTimers?.size ?? 0;
+        while (getActiveWorkerCount() + pendingRestarts < state.desiredWorkers) {
+            const worker = forkWorker(context, { allowSurge, allowDrainingOverlap });
             if (!worker) {
                 break;
             }
@@ -314,7 +320,7 @@ export function createLifecycle(state) {
                         return;
                     }
                     repliedWorkerIds.add(worker.id);
-                    replies.push({ pid: worker.process.pid, id: worker.id, ...msg });
+                    replies.push({ ...msg, pid: worker.process.pid, id: worker.id });
                     if (replies.length === workers.length) {
                         finish();
                     }
@@ -365,6 +371,33 @@ export function createLifecycle(state) {
                 rss: memory?.rss,
                 external: memory?.external,
                 arrayBuffers: memory?.arrayBuffers,
+            });
+
+            if (state.workerStates.get(worker.id) === "draining" || !memory) {
+                return;
+            }
+
+            // Preserve cluster availability when several workers cross the
+            // same hard limit together. The next offender will be evaluated
+            // on a later heartbeat after the in-flight retirement settles.
+            if (state.workerRetirementPromises.size > 0) {
+                return;
+            }
+
+            const heapMB = memory.heapUsed / 1024 / 1024;
+            const rssMB = typeof memory.rss === "number" ? memory.rss / 1024 / 1024 : 0;
+            const heapExceeded = maxWorkerMemory > 0 && heapMB > maxWorkerMemory;
+            const rssExceeded = maxWorkerRss > 0 && rssMB > maxWorkerRss;
+            if (!heapExceeded && !rssExceeded) {
+                return;
+            }
+
+            const reason = rssExceeded
+                ? `RSS ${rssMB.toFixed(2)}MB > ${maxWorkerRss}MB`
+                : `heap ${heapMB.toFixed(2)}MB > ${maxWorkerMemory}MB`;
+            log.warn(`Worker ${worker.id} exceeded memory limit (${reason}). Restarting...`);
+            void retireWorker(worker, { reason: "memory limit", graceMs: 0 }).catch((err) => {
+                log.error(`Failed to retire worker ${worker.id} after memory limit:`, err);
             });
         };
         state.workerMessageHandlers.set(worker.id, { worker, handler: messageHandler });

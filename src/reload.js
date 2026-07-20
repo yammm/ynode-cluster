@@ -45,14 +45,23 @@ export function createReload(state, lifecycle) {
     const { reloadOnlineTimeout, reloadListeningTimeout, reloadDisconnectWait } = config;
 
     function createAbortError(reason = "Cluster reload was aborted") {
-        const error = reason instanceof Error ? reason : new Error(String(reason));
+        if (reason instanceof Error && reason.name === "AbortError") {
+            return reason;
+        }
+        const error =
+            reason instanceof Error
+                ? new Error(reason.message, { cause: reason })
+                : new Error(String(reason));
         error.name = "AbortError";
         return error;
     }
 
     function throwIfAborted(signal) {
         if (signal?.aborted) {
-            throw createAbortError(signal.reason);
+            const reason = signal.reason;
+            throw reason instanceof Error && reason.name === "AbortError"
+                ? reason
+                : createAbortError(reason);
         }
     }
 

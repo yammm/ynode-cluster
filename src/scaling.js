@@ -23,29 +23,26 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-import cluster from "node:cluster";
-
 /**
- * Creates the capacity and health controller. The control loop
+ * Creates the capacity and load-scaling controller. The control loop
  * fires every `autoScaleInterval` ms and:
  *   1. Restores desired capacity when restart policy permits it.
- *   2. Enforces per-worker heap/RSS limits through the shared bounded
- *      retirement path — this safety check runs even during cooldown/reload.
- *   3. Skips scaling decisions while a reload is in flight (worker count
+ *   2. Skips scaling decisions while a reload is in flight (worker count
  *      is transiently inflated).
- *   4. Scales up when average event-loop lag, heap, or RSS exceeds its
+ *   3. Scales up when average event-loop lag, heap, or RSS exceeds its
  *      configured threshold.
- *   5. Scales down by retiring the most-recently-added worker when
+ *   4. Scales down by retiring the most-recently-added worker when
  *      average lag falls below `scaleDownThreshold`, gated by
  *      `scaleDownGrace` after the last scale-up.
  *
- * In `mode: "max"`, desired-capacity reconciliation and worker memory limits
- * remain active while load-based scaling decisions are naturally bounded by
+ * Per-worker memory limits are enforced when each heartbeat arrives in the
+ * lifecycle controller. In `mode: "max"`, desired-capacity reconciliation
+ * remains active while load-based scaling decisions are naturally bounded by
  * the fixed desired worker count.
  *
  * @param {object} state - Shared cluster state.
  * @param {object} lifecycle - Lifecycle controller from createLifecycle().
- * @returns {{ start: function(): void, stop: function(): void }}
+ * @returns {{ tick: function(): void, start: function(): void, stop: function(): void }}
  */
 export function createScaling(state, lifecycle) {
     const { config, log } = state;
@@ -61,8 +58,6 @@ export function createScaling(state, lifecycle) {
         heartbeatStaleAfter,
         scaleUpMemory,
         scaleUpRss,
-        maxWorkerMemory,
-        maxWorkerRss,
         norestart,
     } = config;
 
@@ -87,7 +82,9 @@ export function createScaling(state, lifecycle) {
             ++count;
         }
 
-        // Avoid scaling decisions if we have no stats yet
+        // Avoid load-based scaling decisions if we have no fresh stats. Stale
+        // telemetry remains visible through metrics but is not treated as
+        // evidence of either high or low load.
         if (count === 0) {
             return;
         }
@@ -114,34 +111,6 @@ export function createScaling(state, lifecycle) {
 
         const currentWorkers = lifecycle.getActiveWorkerCount();
 
-        // Leak Protection (Max Worker Memory) — runs even during reload.
-        if (maxWorkerMemory > 0 || maxWorkerRss > 0) {
-            for (const [id, stats] of freshLoads) {
-                const heapMB = typeof stats.memory === "number" ? stats.memory / 1024 / 1024 : 0;
-                const rssMB = typeof stats.rss === "number" ? stats.rss / 1024 / 1024 : 0;
-                const heapExceeded = maxWorkerMemory > 0 && heapMB > maxWorkerMemory;
-                const rssExceeded = maxWorkerRss > 0 && rssMB > maxWorkerRss;
-                if (heapExceeded || rssExceeded) {
-                    const reason = rssExceeded
-                        ? `RSS ${rssMB.toFixed(2)}MB > ${maxWorkerRss}MB`
-                        : `heap ${heapMB.toFixed(2)}MB > ${maxWorkerMemory}MB`;
-                    log.warn(`Worker ${id} exceeded memory limit (${reason}). Restarting...`);
-                    const worker = cluster.workers[id];
-                    if (worker) {
-                        void lifecycle
-                            .retireWorker(worker, {
-                                reason: "memory limit",
-                                graceMs: 0,
-                            })
-                            .catch((err) => {
-                                log.error(`Failed to retire worker ${id} after memory limit:`, err);
-                            });
-                    }
-                    return; // Wait for exit handler to restart it.
-                }
-            }
-        }
-
         // Skip all scaling decisions during an active reload — worker
         // count is transiently inflated and the reload orchestrator owns
         // the lifecycle.
@@ -165,7 +134,7 @@ export function createScaling(state, lifecycle) {
 
         if (
             (shouldScaleUpLag || shouldScaleUpHeap || shouldScaleUpRss) &&
-            currentWorkers < maxWorkers
+            state.desiredWorkers < maxWorkers
         ) {
             const reason = shouldScaleUpRss
                 ? `High RSS (Avg: ${avgRssMB.toFixed(2)}MB)`
@@ -174,7 +143,7 @@ export function createScaling(state, lifecycle) {
                   : `High Lag (Avg: ${avgLag.toFixed(2)}ms)`;
 
             log.info(`${reason} detected. Scaling up...`);
-            lifecycle.setDesiredWorkerCount(currentWorkers + 1);
+            lifecycle.setDesiredWorkerCount(state.desiredWorkers + 1);
             const scaledWorkers = lifecycle.ensureDesiredCapacity("scale up");
             if (scaledWorkers.length > 0) {
                 lifecycle.emitLifecycle("scale_up", {
@@ -194,13 +163,19 @@ export function createScaling(state, lifecycle) {
                 return;
             }
 
+            if ((state.workerRetirementPromises?.size ?? 0) > 0) {
+                log.debug("Skipping scale down while a worker retirement is in progress.");
+                return;
+            }
+
             log.info(`Low load detected (Avg Lag: ${avgLag.toFixed(2)}ms). Scaling down...`);
             const workers = lifecycle.getWorkers();
             const victim = workers.findLast(
                 (worker) => state.workerStates.get(worker.id) !== "draining",
             );
             if (victim) {
-                lifecycle.setDesiredWorkerCount(currentWorkers - 1);
+                const previousDesiredWorkers = state.desiredWorkers;
+                const scaleDownTarget = lifecycle.setDesiredWorkerCount(previousDesiredWorkers - 1);
                 void lifecycle
                     .retireWorker(victim, {
                         reason: "scale down",
@@ -211,7 +186,12 @@ export function createScaling(state, lifecycle) {
                             `Failed to retire worker ${victim.process.pid} during scale down:`,
                             err,
                         );
-                        lifecycle.ensureDesiredCapacity("recover failed scale down");
+                        if (state.desiredWorkers === scaleDownTarget) {
+                            lifecycle.setDesiredWorkerCount(previousDesiredWorkers);
+                        }
+                        lifecycle.ensureDesiredCapacity("recover failed scale down", {
+                            allowSurge: true,
+                        });
                     });
                 lifecycle.emitLifecycle("scale_down", {
                     workerId: victim.id,
@@ -235,5 +215,5 @@ export function createScaling(state, lifecycle) {
         }
     }
 
-    return { start, stop };
+    return { tick, start, stop };
 }

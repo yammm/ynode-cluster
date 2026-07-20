@@ -22,20 +22,28 @@ export interface ClusterTtyOptions {
 
     /**
      * Input stream for command mode.
+     * Command handling starts only when isTTY is true.
      * Default: process.stdin.
      */
-    stdin?: NodeJS.ReadStream;
+    stdin?: NodeJS.ReadableStream & { isTTY?: boolean };
 
     /**
      * Output stream for command mode.
      * Default: process.stdout.
      */
-    stdout?: NodeJS.WriteStream;
+    stdout?: NodeJS.WritableStream;
 
     /**
      * Optional command prompt text.
      */
     prompt?: string;
+}
+
+export interface ClusterLogger {
+    debug(...args: unknown[]): void;
+    info(...args: unknown[]): void;
+    warn(...args: unknown[]): void;
+    error(...args: unknown[]): void;
 }
 
 export interface ClusterOptions {
@@ -89,7 +97,7 @@ export interface ClusterOptions {
     scaleDownGrace?: number;
 
     /**
-     * Interval (ms) for auto-scaling checks in "smart" mode.
+     * Interval (ms) for capacity and load-scaling checks.
      * Default: 5000.
      */
     autoScaleInterval?: number;
@@ -125,13 +133,13 @@ export interface ClusterOptions {
     scaleUpRss?: number;
 
     /**
-     * Maximum heap usage (MB) for a single worker before it is restarted (Leak Protection).
+     * Maximum heap usage (MB) for a single worker before it is restarted, checked on heartbeat.
      * Default: 0 (disabled).
      */
     maxWorkerMemory?: number;
 
     /**
-     * Maximum RSS (MB) for a single worker before it is restarted.
+     * Maximum RSS (MB) for a single worker before it is restarted, checked on heartbeat.
      * Default: 0 (disabled).
      */
     maxWorkerRss?: number;
@@ -247,5 +255,5 @@ export interface ClusterManager {
 export function run<T = void>(
     startWorker: () => T | Promise<T>,
     options?: ClusterOptions | boolean,
-    log?: Console | any,
+    log?: ClusterLogger,
 ): ClusterManager | T | Promise<T>;

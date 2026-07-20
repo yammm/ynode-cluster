@@ -183,11 +183,11 @@ function validateTtyConfig(ttyConfig) {
         );
     }
 
-    if (ttyConfig.stdin !== undefined && typeof ttyConfig.stdin.on !== "function") {
+    if (ttyConfig.stdin !== undefined && typeof ttyConfig.stdin?.on !== "function") {
         throw new Error("Invalid configuration: tty.stdin must be a readable stream");
     }
 
-    if (ttyConfig.stdout !== undefined && typeof ttyConfig.stdout.write !== "function") {
+    if (ttyConfig.stdout !== undefined && typeof ttyConfig.stdout?.write !== "function") {
         throw new Error("Invalid configuration: tty.stdout must be a writable stream");
     }
 

@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 
+import { buildClusterConfig, validateClusterConfig } from "../src/config.js";
 import { expectFixtureFailure, killFixture, spawnFixture } from "./helpers/fixture-process.js";
 
 describe("Cluster Integration", () => {
@@ -211,6 +212,17 @@ it("should ignore malformed worker IPC messages", async () => {
             finish(() => reject(err));
         });
     });
+});
+
+it("should reject null TTY streams with configuration errors", () => {
+    assert.throws(
+        () => validateClusterConfig(buildClusterConfig({ tty: { stdin: null } })),
+        /Invalid configuration: tty.stdin must be a readable stream/,
+    );
+    assert.throws(
+        () => validateClusterConfig(buildClusterConfig({ tty: { stdout: null } })),
+        /Invalid configuration: tty.stdout must be a writable stream/,
+    );
 });
 
 const invalidConfigCases = [
