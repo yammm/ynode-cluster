@@ -77,15 +77,34 @@ You can reload the cluster (e.g. after a code deployment) without dropping conne
 
 1. Sequentially start a new worker.
 2. Wait for it to come online, and if the old worker was serving traffic, wait for the replacement to become listening.
-3. Gracefully shut down the old worker and verify that its process exits before continuing.
+3. Run the optional replacement health check.
+4. Gracefully shut down the old worker and verify that its process exits before continuing.
 
-Only one surge process is permitted during a reload. A replacement that exits or disconnects before readiness fails the reload immediately and is reaped without disturbing the original worker. Starting cluster shutdown cancels any active reload.
+Only one surge process is permitted during a reload. A replacement that exits, disconnects, or fails the configured health check is reaped without disturbing the original worker. Starting cluster shutdown cancels any active reload.
 
 ```js
 if (cluster.isPrimary) {
     await control.reload();
     console.log("Reload complete!");
 }
+```
+
+Use `reloadHealthCheck` when "online" or "listening" is too early for your app to receive traffic. Returning `false`, throwing, rejecting, or exceeding `reloadHealthTimeout` fails the reload before the old worker is retired.
+
+```js
+const healthPorts = new Map();
+
+const control = run(startServer, {
+    reloadHealthTimeout: 5000,
+    reloadHealthCheck: async (worker) => {
+        const port = healthPorts.get(worker.id);
+        if (!port) {
+            return false;
+        }
+        const res = await fetch(`http://127.0.0.1:${port}/health`);
+        return res.ok;
+    },
+});
 ```
 
 ## Configuration
@@ -108,6 +127,8 @@ The `run(startWorker, options)` function accepts the following options:
 | `shutdownTimeout` | `number` | `10000` | Time (ms) to wait for workers to shut down before forced exit. |
 | `reloadOnlineTimeout` | `number` | `10000` | Max time (ms) to wait for replacement worker `online` during reload. |
 | `reloadListeningTimeout` | `number` | `10000` | Max time (ms) to wait for replacement worker `listening` when replacing a listening worker. |
+| `reloadHealthTimeout` | `number` | `10000` | Max time (ms) to wait for `reloadHealthCheck` during reload. |
+| `reloadHealthCheck` | `function` | `undefined` | Optional replacement-worker health check. Returning `false`, throwing, rejecting, or timing out fails the reload before the old worker is retired. |
 | `reloadDisconnectWait` | `number` | `10000` | Max time (ms) to wait for an old worker to exit gracefully during each reload step. |
 | `tty` | `object` | `{ enabled: false }` | Optional TTY command mode settings for interactive master commands. |
 | `tty.enabled` | `boolean` | `false` | Enables TTY command mode in the master process. |

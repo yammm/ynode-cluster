@@ -1,3 +1,5 @@
+import type * as cluster from "node:cluster";
+
 /**
  * Configuration options for the cluster manager.
  */
@@ -45,6 +47,17 @@ export interface ClusterLogger {
     warn(...args: unknown[]): void;
     error(...args: unknown[]): void;
 }
+
+export interface ReloadHealthCheckContext {
+    oldWorker: cluster.Worker;
+    signal: AbortSignal;
+    workerCount: number;
+}
+
+export type ReloadHealthCheck = (
+    worker: cluster.Worker,
+    context: ReloadHealthCheckContext,
+) => boolean | void | Promise<boolean | void>;
 
 export interface ClusterOptions {
     /**
@@ -161,6 +174,18 @@ export interface ClusterOptions {
      * Default: 10000.
      */
     reloadListeningTimeout?: number;
+
+    /**
+     * Timeout (ms) waiting for reloadHealthCheck during reload.
+     * Default: 10000.
+     */
+    reloadHealthTimeout?: number;
+
+    /**
+     * Optional health check for a replacement worker during reload. Returning false,
+     * throwing, rejecting, or timing out fails the reload before the old worker is retired.
+     */
+    reloadHealthCheck?: ReloadHealthCheck;
 
     /**
      * Time (ms) to wait for old worker disconnect during each reload step.

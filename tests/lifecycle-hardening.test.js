@@ -435,6 +435,133 @@ describe("Lifecycle hardening", () => {
         }
     });
 
+    it("runs reload health checks before retiring old workers", async (t) => {
+        const oldWorker = createFakeWorker(9701, 19701);
+        const replacement = createFakeWorker(9702, 19702);
+        installClusterWorkers(t, [oldWorker]);
+
+        const calls = [];
+        const state = {
+            config: {
+                reloadOnlineTimeout: 5000,
+                reloadListeningTimeout: 5000,
+                reloadHealthTimeout: 5000,
+                reloadDisconnectWait: 5000,
+                reloadHealthCheck: async (worker, context) => {
+                    calls.push(`health:${worker.id}:${context.oldWorker.id}`);
+                    assert.equal(context.signal.aborted, false);
+                    return true;
+                },
+            },
+            log: { info() {}, warn() {}, error() {}, debug() {} },
+            isShuttingDown: false,
+            listeningWorkers: new Set([oldWorker.id]),
+            reloadPromise: null,
+            reloadAbortController: null,
+        };
+        const lifecycle = {
+            getActiveWorkers: () => [oldWorker],
+            getActiveWorkerCount: () => 1,
+            forkWorker: () => {
+                cluster.workers[replacement.id] = replacement;
+                setImmediate(() => {
+                    replacement.emit("online");
+                    setImmediate(() => cluster.emit("listening", replacement));
+                });
+                return replacement;
+            },
+            attachWorkerErrorHandler() {},
+            retireWorker: async (worker) => calls.push(`retire:${worker.id}`),
+            emitLifecycle() {},
+        };
+
+        const reload = createReload(state, lifecycle);
+        await reload.reload();
+
+        assert.deepStrictEqual(calls, [
+            `health:${replacement.id}:${oldWorker.id}`,
+            `retire:${oldWorker.id}`,
+        ]);
+    });
+
+    it("fails reload and reaps replacement when health check returns false", async (t) => {
+        const oldWorker = createFakeWorker(9711, 19711);
+        const replacement = createFakeWorker(9712, 19712);
+        installClusterWorkers(t, [oldWorker]);
+
+        const retiredWorkers = [];
+        const state = {
+            config: {
+                reloadOnlineTimeout: 5000,
+                reloadListeningTimeout: 5000,
+                reloadHealthTimeout: 5000,
+                reloadDisconnectWait: 5000,
+                reloadHealthCheck: () => false,
+            },
+            log: { info() {}, warn() {}, error() {}, debug() {} },
+            isShuttingDown: false,
+            listeningWorkers: new Set(),
+            reloadPromise: null,
+            reloadAbortController: null,
+        };
+        const lifecycle = {
+            getActiveWorkers: () => [oldWorker],
+            getActiveWorkerCount: () => 1,
+            forkWorker: () => {
+                cluster.workers[replacement.id] = replacement;
+                setImmediate(() => replacement.emit("online"));
+                return replacement;
+            },
+            attachWorkerErrorHandler() {},
+            retireWorker: async (worker) => retiredWorkers.push(worker),
+            emitLifecycle() {},
+        };
+
+        const reload = createReload(state, lifecycle);
+
+        await assert.rejects(reload.reload(), /failed reload health check/);
+        assert.deepStrictEqual(retiredWorkers, [replacement]);
+    });
+
+    it("fails reload and reaps replacement when health check times out", async (t) => {
+        const oldWorker = createFakeWorker(9721, 19721);
+        const replacement = createFakeWorker(9722, 19722);
+        installClusterWorkers(t, [oldWorker]);
+
+        const retiredWorkers = [];
+        const state = {
+            config: {
+                reloadOnlineTimeout: 5000,
+                reloadListeningTimeout: 5000,
+                reloadHealthTimeout: 10,
+                reloadDisconnectWait: 5000,
+                reloadHealthCheck: () => new Promise(() => {}),
+            },
+            log: { info() {}, warn() {}, error() {}, debug() {} },
+            isShuttingDown: false,
+            listeningWorkers: new Set(),
+            reloadPromise: null,
+            reloadAbortController: null,
+        };
+        const lifecycle = {
+            getActiveWorkers: () => [oldWorker],
+            getActiveWorkerCount: () => 1,
+            forkWorker: () => {
+                cluster.workers[replacement.id] = replacement;
+                setImmediate(() => replacement.emit("online"));
+                return replacement;
+            },
+            attachWorkerErrorHandler() {},
+            retireWorker: async (worker) => retiredWorkers.push(worker),
+            emitLifecycle() {},
+        };
+
+        const reload = createReload(state, lifecycle);
+
+        await assert.rejects(reload.reload(), /did not pass reload health check within 10ms/);
+        assert.deepStrictEqual(retiredWorkers, [replacement]);
+    });
+
     it("reports reload failure instead of completion when old worker retirement times out", async (t) => {
         const oldWorker = createFakeWorker(9601, 19601);
         const replacement = createFakeWorker(9602, 19602);

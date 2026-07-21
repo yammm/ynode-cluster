@@ -109,6 +109,8 @@ function startWorkerHeartbeat(log) {
  * @param {number} [options.maxWorkerRss=0] - Per-worker RSS MB restart threshold, checked on heartbeat.
  * @param {number} [options.reloadOnlineTimeout=10000] - Max ms to wait for replacement worker "online" during reload.
  * @param {number} [options.reloadListeningTimeout=10000] - Max ms to wait for replacement worker "listening" during reload.
+ * @param {number} [options.reloadHealthTimeout=10000] - Max ms to wait for reloadHealthCheck during reload.
+ * @param {function} [options.reloadHealthCheck] - Optional replacement-worker health check. Returning false, throwing, rejecting, or timing out fails the reload before the old worker is retired.
  * @param {number} [options.reloadDisconnectWait=10000] - Max ms to wait for old worker to exit during each reload step.
  * @param {object} [options.tty] - Optional TTY command mode options.
  * @param {boolean} [options.tty.enabled=false] - Enable TTY mode in master process.

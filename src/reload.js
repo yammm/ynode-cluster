@@ -30,8 +30,9 @@ import cluster from "node:cluster";
  * replacement of the active worker pool. For each snapshotted worker:
  *   1. Fork a replacement worker and wait for `online`.
  *   2. If the original was listening, wait for the replacement to listen.
- *   3. Retire the old worker through the shared bounded shutdown path.
- *   4. Verify the old process exited before moving to the next worker.
+ *   3. Run the optional replacement health check.
+ *   4. Retire the old worker through the shared bounded shutdown path.
+ *   5. Verify the old process exited before moving to the next worker.
  *
  * Concurrent calls return the in-flight reload promise. Calls during shutdown
  * reject immediately, and shutdown aborts any readiness wait in progress.
@@ -42,7 +43,14 @@ import cluster from "node:cluster";
  */
 export function createReload(state, lifecycle) {
     const { config, log } = state;
-    const { reloadOnlineTimeout, reloadListeningTimeout, reloadDisconnectWait } = config;
+    const {
+        reloadOnlineTimeout,
+        reloadListeningTimeout,
+        reloadHealthCheck,
+        reloadHealthTimeout,
+        reloadDisconnectWait,
+    } = config;
+    const reloadHealthTimeoutMs = reloadHealthTimeout ?? reloadListeningTimeout;
 
     function createAbortError(reason = "Cluster reload was aborted") {
         if (reason instanceof Error && reason.name === "AbortError") {
@@ -226,6 +234,63 @@ export function createReload(state, lifecycle) {
         });
     }
 
+    async function waitForWorkerHealth(
+        worker,
+        oldWorker,
+        signal,
+        timeoutMs = reloadHealthTimeoutMs,
+    ) {
+        if (typeof reloadHealthCheck !== "function") {
+            return;
+        }
+        if (!worker) {
+            throw new Error("Cannot run reload health check: missing worker");
+        }
+        if (signal?.aborted) {
+            throw createAbortError(signal.reason);
+        }
+
+        let timeout;
+        let removeAbortListener = () => {};
+        const timeoutPromise = new Promise((_, reject) => {
+            timeout = setTimeout(() => {
+                reject(
+                    new Error(
+                        `Replacement worker ${worker.process.pid} did not pass reload health check within ${timeoutMs}ms`,
+                    ),
+                );
+            }, timeoutMs);
+            timeout.unref();
+
+            const onAbort = () => reject(createAbortError(signal.reason));
+            signal?.addEventListener("abort", onAbort, { once: true });
+            removeAbortListener = () => signal?.removeEventListener("abort", onAbort);
+        });
+
+        const healthPromise = Promise.resolve()
+            .then(() =>
+                reloadHealthCheck(worker, {
+                    oldWorker,
+                    signal,
+                    workerCount: lifecycle.getActiveWorkerCount(),
+                }),
+            )
+            .then((result) => {
+                if (result === false) {
+                    throw new Error(
+                        `Replacement worker ${worker.process.pid} failed reload health check`,
+                    );
+                }
+            });
+
+        try {
+            await Promise.race([healthPromise, timeoutPromise]);
+        } finally {
+            clearTimeout(timeout);
+            removeAbortListener();
+        }
+    }
+
     async function performReload(signal) {
         log.info("Starting zero-downtime cluster reload...");
         lifecycle.emitLifecycle("reload_start", { workerCount: lifecycle.getActiveWorkerCount() });
@@ -290,6 +355,20 @@ export function createReload(state, lifecycle) {
                 log.info(
                     `Replacement worker ${newWorker.process.pid} is online. Gracefully shutting down old worker ${oldWorker.process.pid}...`,
                 );
+            }
+
+            try {
+                await waitForWorkerHealth(newWorker, oldWorker, signal);
+            } catch (err) {
+                log.error(
+                    `Reload aborted: replacement worker ${newWorker.process.pid} failed health check.`,
+                    err,
+                );
+                await lifecycle.retireWorker(newWorker, {
+                    reason: "unhealthy reload replacement",
+                    graceMs: 0,
+                });
+                throw err;
             }
 
             await lifecycle.retireWorker(oldWorker, {

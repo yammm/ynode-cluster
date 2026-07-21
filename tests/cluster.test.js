@@ -225,6 +225,17 @@ it("should reject null TTY streams with configuration errors", () => {
     );
 });
 
+it("should reject invalid reload health-check configuration", () => {
+    assert.throws(
+        () => validateClusterConfig(buildClusterConfig({ reloadHealthTimeout: 0 })),
+        /Invalid configuration: reloadHealthTimeout \(0\) must be greater than 0/,
+    );
+    assert.throws(
+        () => validateClusterConfig(buildClusterConfig({ reloadHealthCheck: true })),
+        /Invalid configuration: reloadHealthCheck \(true\) must be a function/,
+    );
+});
+
 const invalidConfigCases = [
     {
         name: "should throw error on invalid configuration",

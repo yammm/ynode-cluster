@@ -47,6 +47,7 @@ const NUMERIC_CONFIG_KEYS = [
     "maxWorkerRss",
     "reloadOnlineTimeout",
     "reloadListeningTimeout",
+    "reloadHealthTimeout",
     "reloadDisconnectWait",
 ];
 
@@ -130,6 +131,7 @@ export function buildClusterConfig(options) {
         norestart: false,
         reloadOnlineTimeout: 10000,
         reloadListeningTimeout: 10000,
+        reloadHealthTimeout: 10000,
         reloadDisconnectWait: 10000,
         ...rawOptions,
     };
@@ -321,9 +323,21 @@ export function validateClusterConfig(config) {
         );
     }
 
+    if (config.reloadHealthTimeout <= 0) {
+        throw new Error(
+            `Invalid configuration: reloadHealthTimeout (${config.reloadHealthTimeout}) must be greater than 0`,
+        );
+    }
+
     if (config.reloadDisconnectWait <= 0) {
         throw new Error(
             `Invalid configuration: reloadDisconnectWait (${config.reloadDisconnectWait}) must be greater than 0`,
+        );
+    }
+
+    if (config.reloadHealthCheck !== undefined && typeof config.reloadHealthCheck !== "function") {
+        throw new Error(
+            `Invalid configuration: reloadHealthCheck (${config.reloadHealthCheck}) must be a function`,
         );
     }
 }
