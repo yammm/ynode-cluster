@@ -435,6 +435,53 @@ describe("Lifecycle hardening", () => {
         }
     });
 
+    it("reports reload failure instead of completion when old worker retirement times out", async (t) => {
+        const oldWorker = createFakeWorker(9601, 19601);
+        const replacement = createFakeWorker(9602, 19602);
+        installClusterWorkers(t, [oldWorker]);
+
+        const emittedEvents = [];
+        const state = {
+            config: {
+                reloadOnlineTimeout: 5000,
+                reloadListeningTimeout: 5000,
+                reloadDisconnectWait: 10,
+            },
+            log: { info() {}, warn() {}, error() {}, debug() {} },
+            isShuttingDown: false,
+            listeningWorkers: new Set([oldWorker.id]),
+            reloadPromise: null,
+            reloadAbortController: null,
+        };
+        const lifecycle = {
+            getActiveWorkers: () => [oldWorker],
+            getActiveWorkerCount: () => 1,
+            forkWorker: () => {
+                cluster.workers[replacement.id] = replacement;
+                setImmediate(() => {
+                    replacement.emit("online");
+                    setImmediate(() => cluster.emit("listening", replacement));
+                });
+                return replacement;
+            },
+            attachWorkerErrorHandler() {},
+            retireWorker: async (worker) => {
+                if (worker === oldWorker) {
+                    throw new Error("old worker refused to exit");
+                }
+            },
+            emitLifecycle: (type, payload) => emittedEvents.push({ type, payload }),
+        };
+
+        const reload = createReload(state, lifecycle);
+
+        await assert.rejects(reload.reload(), /old worker refused to exit/);
+        assert.deepStrictEqual(
+            emittedEvents.map((event) => event.type),
+            ["reload_start", "reload_fail"],
+        );
+    });
+
     it("does not mutate an Error supplied when cancelling reload", async () => {
         const state = {
             config: {
