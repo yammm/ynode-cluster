@@ -128,7 +128,8 @@ export interface ClusterOptions {
     shutdownSignals?: NodeJS.Signals[];
 
     /**
-     * Time (ms) to wait for workers to shutdown before forced exit.
+     * Overall shutdown budget per worker. Up to two seconds are reserved for
+     * SIGTERM/SIGKILL escalation after the graceful IPC shutdown wait.
      * Default: 10000.
      */
     shutdownTimeout?: number;
@@ -188,7 +189,8 @@ export interface ClusterOptions {
     reloadHealthCheck?: ReloadHealthCheck;
 
     /**
-     * Time (ms) to wait for old worker disconnect during each reload step.
+     * Graceful IPC shutdown wait for the old worker during each reload step
+     * before SIGTERM/SIGKILL escalation.
      * Default: 10000.
      */
     reloadDisconnectWait?: number;

@@ -102,7 +102,7 @@ function startWorkerHeartbeat(log) {
  * @param {number} [options.autoScaleInterval=5000] - Ms between capacity and load-scaling checks.
  * @param {number} [options.heartbeatStaleAfter=10000] - Max heartbeat age used for scaling decisions.
  * @param {string[]} [options.shutdownSignals] - Signals that initiate graceful primary shutdown.
- * @param {number} [options.shutdownTimeout=10000] - Total graceful worker shutdown budget in ms.
+ * @param {number} [options.shutdownTimeout=10000] - Overall shutdown budget per worker; up to two seconds are reserved for SIGTERM/SIGKILL escalation after the graceful IPC shutdown wait.
  * @param {number} [options.scaleUpMemory=0] - Average worker heap MB that triggers scale-up.
  * @param {number} [options.scaleUpRss=0] - Average worker RSS MB that triggers scale-up.
  * @param {number} [options.maxWorkerMemory=0] - Per-worker heap MB restart threshold, checked on heartbeat.
@@ -111,7 +111,7 @@ function startWorkerHeartbeat(log) {
  * @param {number} [options.reloadListeningTimeout=10000] - Max ms to wait for replacement worker "listening" during reload.
  * @param {number} [options.reloadHealthTimeout=10000] - Max ms to wait for reloadHealthCheck during reload.
  * @param {function} [options.reloadHealthCheck] - Optional replacement-worker health check. Returning false, throwing, rejecting, or timing out fails the reload before the old worker is retired.
- * @param {number} [options.reloadDisconnectWait=10000] - Max ms to wait for old worker to exit during each reload step.
+ * @param {number} [options.reloadDisconnectWait=10000] - Graceful IPC shutdown wait for old worker exit during each reload step before SIGTERM/SIGKILL escalation.
  * @param {object} [options.tty] - Optional TTY command mode options.
  * @param {boolean} [options.tty.enabled=false] - Enable TTY mode in master process.
  * @param {boolean} [options.tty.commands=true] - Enable line-based command handling when TTY mode is enabled.

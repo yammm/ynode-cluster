@@ -124,12 +124,12 @@ The `run(startWorker, options)` function accepts the following options:
 | `autoScaleInterval` | `number` | `5000` | Interval (ms) for capacity and smart-mode load-scaling checks. |
 | `heartbeatStaleAfter` | `number` | `10000` | Maximum heartbeat age (ms) included in scaling decisions. |
 | `shutdownSignals` | `string[]` | `['SIGINT', 'SIGTERM', 'SIGQUIT']` on POSIX | Supported process signals that trigger graceful shutdown. |
-| `shutdownTimeout` | `number` | `10000` | Time (ms) to wait for workers to shut down before forced exit. |
+| `shutdownTimeout` | `number` | `10000` | Overall shutdown budget per worker; up to two seconds are reserved for SIGTERM/SIGKILL escalation after the graceful IPC shutdown wait. |
 | `reloadOnlineTimeout` | `number` | `10000` | Max time (ms) to wait for replacement worker `online` during reload. |
 | `reloadListeningTimeout` | `number` | `10000` | Max time (ms) to wait for replacement worker `listening` when replacing a listening worker. |
 | `reloadHealthTimeout` | `number` | `10000` | Max time (ms) to wait for `reloadHealthCheck` during reload. |
 | `reloadHealthCheck` | `function` | `undefined` | Optional replacement-worker health check. Returning `false`, throwing, rejecting, or timing out fails the reload before the old worker is retired. |
-| `reloadDisconnectWait` | `number` | `10000` | Max time (ms) to wait for an old worker to exit gracefully during each reload step. |
+| `reloadDisconnectWait` | `number` | `10000` | Graceful IPC shutdown wait (ms) for the old worker during each reload step before SIGTERM/SIGKILL escalation. |
 | `tty` | `object` | `{ enabled: false }` | Optional TTY command mode settings for interactive master commands. |
 | `tty.enabled` | `boolean` | `false` | Enables TTY command mode in the master process. |
 | `tty.commands` | `boolean` | `true` | Enables command handling when `tty.enabled` is true. |
