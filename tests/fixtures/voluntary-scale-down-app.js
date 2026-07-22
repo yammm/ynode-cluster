@@ -32,6 +32,7 @@ const manager = run(
                 cluster.worker.disconnect();
             }
         });
+        cluster.worker.send({ cmd: "fixture-ready" });
     },
     {
         mode: "smart",
@@ -50,13 +51,16 @@ const manager = run(
 if (cluster.isPrimary) {
     let scaledUp = false;
     let retirementRequested = false;
+    const readyWorkerIds = new Set();
 
-    manager.on("scale_up", () => {
-        scaledUp = true;
-    });
-    manager.on("worker_online", () => {
+    const requestRetirement = () => {
         const workers = Object.values(cluster.workers).filter(Boolean);
-        if (!scaledUp || retirementRequested || workers.length < 2) {
+        if (
+            !scaledUp ||
+            retirementRequested ||
+            workers.length < 2 ||
+            workers.some((worker) => !readyWorkerIds.has(worker.id))
+        ) {
             return;
         }
 
@@ -65,6 +69,18 @@ if (cluster.isPrimary) {
             worker.send("settle");
         }
         workers.at(-1).send("idle");
+    };
+
+    manager.on("scale_up", () => {
+        scaledUp = true;
+        requestRetirement();
+    });
+    cluster.on("message", (worker, message) => {
+        if (message?.cmd !== "fixture-ready") {
+            return;
+        }
+        readyWorkerIds.add(worker.id);
+        requestRetirement();
     });
     manager.on("worker_exit", () => {
         if (!retirementRequested) {

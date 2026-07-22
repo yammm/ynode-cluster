@@ -191,7 +191,6 @@ export function createLifecycle(state) {
             };
             const onExit = () => finish(true);
             const timeout = setTimeout(() => finish(false), Math.max(0, timeoutMs));
-            timeout.unref();
             worker.once("exit", onExit);
 
             if (worker.isDead()) {
@@ -309,8 +308,6 @@ export function createLifecycle(state) {
             };
 
             const timer = setTimeout(finish, timeoutMs);
-            timer.unref();
-
             for (const worker of workers) {
                 const handler = (msg) => {
                     if (!msg || typeof msg !== "object" || msg.cmd !== cmd) {

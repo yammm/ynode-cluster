@@ -98,8 +98,6 @@ export function createReload(state, lifecycle) {
                     ),
                 );
             }, timeoutMs);
-            timeout.unref();
-
             const cleanup = () => {
                 cluster.off("listening", onListening);
                 worker.off("disconnect", onDisconnect);
@@ -173,8 +171,6 @@ export function createReload(state, lifecycle) {
                     ),
                 );
             }, timeoutMs);
-            timeout.unref();
-
             const cleanup = () => {
                 worker.off("online", onOnline);
                 worker.off("disconnect", onDisconnect);
@@ -260,8 +256,6 @@ export function createReload(state, lifecycle) {
                     ),
                 );
             }, timeoutMs);
-            timeout.unref();
-
             const onAbort = () => reject(createAbortError(signal.reason));
             signal?.addEventListener("abort", onAbort, { once: true });
             removeAbortListener = () => signal?.removeEventListener("abort", onAbort);
