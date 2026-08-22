@@ -65,7 +65,8 @@ function startWorkerHeartbeat(log) {
 
     const interval = setInterval(() => {
         if (!worker.isConnected()) {
-            return clearInterval(interval);
+            clearInterval(interval);
+            return;
         }
 
         const now = Date.now();
