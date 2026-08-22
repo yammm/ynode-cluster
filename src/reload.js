@@ -26,7 +26,6 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 import cluster from "node:cluster";
 
 const STRANDED_RETIREMENT_RETRY_DELAY_MS = 1000;
-const STRANDED_RETIREMENT_MAX_ATTEMPTS = 5;
 
 /**
  * Creates the reload controller — orchestrates a zero-downtime rolling
@@ -299,14 +298,6 @@ export function createReload(state, lifecycle) {
                 );
             })
             .catch((err) => {
-                if (attempt >= STRANDED_RETIREMENT_MAX_ATTEMPTS) {
-                    log.error(
-                        `Giving up on retiring stranded worker ${oldWorker.process.pid} after ${attempt} attempts; the pool stays above the desired count until it exits.`,
-                        err,
-                    );
-                    return;
-                }
-
                 log.warn(
                     `Retirement retry ${attempt} failed for stranded worker ${oldWorker.process.pid}; retrying in ${STRANDED_RETIREMENT_RETRY_DELAY_MS}ms.`,
                     err,
