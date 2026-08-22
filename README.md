@@ -179,6 +179,33 @@ if (cluster.isPrimary) {
 
 `workerCount` excludes draining workers. `processCount` includes starting, draining, and the single temporary reload surge process. Per-worker metrics expose lifecycle state, listening/readiness state, heartbeat freshness, heap, RSS, external memory, and array-buffer usage.
 
+### Waiting for Usable Capacity
+
+Use `manager.waitForCapacity()` when deployment or orchestration code must wait until the worker pool is actually usable. By default it waits for the desired worker count captured at call time to reach the `listening` state, then resolves with a fresh metrics snapshot. The default deadline is `reloadListeningTimeout` (10 seconds by default).
+
+```javascript
+const manager = run(startWorker, { minWorkers: 2, maxWorkers: 4 });
+
+if (cluster.isPrimary) {
+    const metrics = await manager.waitForCapacity();
+    console.log(`${metrics.workerCount} workers are accepting connections`);
+}
+```
+
+Workers that are online but do not open a shared server can be awaited explicitly. A listening worker also satisfies an `online` wait because it has progressed beyond that lifecycle state.
+
+```javascript
+const controller = new AbortController();
+const metrics = await manager.waitForCapacity({
+    state: "online",
+    count: 1,
+    timeoutMs: 5000,
+    signal: controller.signal,
+});
+```
+
+`timeoutMs: 0` disables the deadline. Starting cluster shutdown rejects pending waits with `CLUSTER_SHUTTING_DOWN`; deadline expiry uses `CLUSTER_WAIT_TIMEOUT`; aborting the supplied signal uses an `AbortError` with code `CLUSTER_WAIT_ABORTED`. Waiting never changes desired capacity.
+
 ### Lifecycle Events and Programmatic Shutdown
 
 The returned manager also provides lifecycle events and a programmatic close API:

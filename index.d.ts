@@ -256,6 +256,30 @@ export interface ClusterMetrics {
     mode: "smart" | "max";
 }
 
+export interface WaitForCapacityOptions {
+    /**
+     * Worker lifecycle state required to satisfy the wait.
+     * `online` also counts workers that have progressed to `listening`.
+     * Default: `listening`.
+     */
+    state?: "online" | "listening";
+
+    /**
+     * Number of workers required. Defaults to the desired worker count captured
+     * when waitForCapacity() is called.
+     */
+    count?: number;
+
+    /**
+     * Deadline in milliseconds. Defaults to reloadOnlineTimeout or
+     * reloadListeningTimeout for the requested state. Set to 0 to disable.
+     */
+    timeoutMs?: number;
+
+    /** Cancels the wait without changing cluster capacity. */
+    signal?: AbortSignal;
+}
+
 /**
  * The cluster manager instance.
  */
@@ -264,6 +288,11 @@ export interface ClusterManager {
      * Returns the current metrics of the cluster.
      */
     getMetrics: () => ClusterMetrics;
+    /**
+     * Resolves with a fresh metrics snapshot when the requested worker capacity
+     * reaches the requested lifecycle state.
+     */
+    waitForCapacity: (options?: WaitForCapacityOptions) => Promise<ClusterMetrics>;
     reload: () => Promise<void>;
     close: () => Promise<void>;
     on: (eventName: ClusterEventName, listener: (event: ClusterEvent) => void) => ClusterManager;

@@ -7,6 +7,7 @@ import {
     type ClusterMetrics,
     type ClusterOptions,
     type ReloadHealthCheck,
+    type WaitForCapacityOptions,
 } from "@ynode/cluster";
 
 const logger: ClusterLogger = {
@@ -35,11 +36,23 @@ function consumeManager(manager: ClusterManager): ClusterMetrics {
         event.type satisfies string;
     };
     manager.on("worker_online", listener).once("scale_up", listener).off("worker_online", listener);
+    const waitOptions = {
+        count: 2,
+        signal: new AbortController().signal,
+        state: "listening",
+        timeoutMs: 5_000,
+    } satisfies WaitForCapacityOptions;
+    const ready: Promise<ClusterMetrics> = manager.waitForCapacity(waitOptions);
+    void ready;
     return manager.getMetrics();
 }
 
 // @ts-expect-error Invalid modes must not be accepted by the public API.
 run(() => {}, { mode: "elastic" });
+
+declare const manager: ClusterManager;
+// @ts-expect-error Capacity state is restricted to online or listening.
+void manager.waitForCapacity({ state: "ready" });
 
 metadata.name satisfies string;
 void consumeManager;

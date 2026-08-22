@@ -4,6 +4,15 @@ import { describe, it } from "node:test";
 import { runFixtureWithOutput } from "./helpers/fixture-process.js";
 
 describe("Cluster Manager Features", () => {
+    it("waits for real worker capacity through the public manager", async () => {
+        const { code, output } = await runFixtureWithOutput("wait-for-capacity-app.js", {
+            timeoutMs: 10000,
+        });
+
+        assert.equal(code, 0, `Expected exit code 0.\nOutput:\n${output}`);
+        assert.match(output, /CAPACITY_READY:2/);
+    });
+
     it("should dedupe concurrent reload calls and expose lifecycle events", async () => {
         let exerciseSent = false;
 
