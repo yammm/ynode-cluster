@@ -92,6 +92,27 @@ describe("TTY Command Mode", () => {
         assert.strictEqual(output.listenerCount("error"), 0);
     });
 
+    it("strips control characters from worker-supplied version replies", async () => {
+        const { input, output } = createTtyHarness({
+            collectWorkerReplies: async () => [
+                { pid: 101, appVersion: "1.0.0\x1b[31mred", nodeVersion: "v20.0.0\x07" },
+                { pid: 102, appVersion: 42, nodeVersion: null },
+            ],
+        });
+
+        const chunks = [];
+        output.on("data", (chunk) => chunks.push(chunk.toString()));
+
+        input.write("/version\n");
+        await new Promise((resolve) => setImmediate(resolve));
+
+        const written = chunks.join("");
+        assert.match(written, /Worker 101: 1\.0\.0\[31mred \(node v20\.0\.0\)/);
+        assert.match(written, /Worker 102: — \(node/);
+        // eslint-disable-next-line no-control-regex
+        assert.doesNotMatch(written, /[\x00\x07\x1b\x7f\x9b]/);
+    });
+
     it("should handle reload commands and ignore duplicate reload trigger", async () => {
         await new Promise((resolve, reject) => {
             const child = spawnFixture("tty-app.js", {

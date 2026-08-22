@@ -29,6 +29,26 @@ import { formatMemoryMB, formatUptime } from "./format.js";
 
 const TTY_BUILTIN_COMMANDS = ["/status", "/ping", "/version"];
 
+// Control characters (including ESC and CSI) that would let a worker inject
+// ANSI escape sequences into the operator's terminal.
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARACTERS = /[\x00-\x1f\x7f\x9b]/g;
+
+/**
+ * Sanitizes a worker-supplied reply field for terminal output by stripping
+ * control characters. Non-string values are treated as absent so callers fall
+ * back to their placeholder text.
+ * @param {*} value - Worker-supplied reply field.
+ * @returns {string|undefined} Sanitized string, or undefined when not a string.
+ */
+function sanitizeReplyField(value) {
+    if (typeof value !== "string") {
+        return undefined;
+    }
+
+    return value.replace(CONTROL_CHARACTERS, "");
+}
+
 /**
  * Creates the TTY command-mode controller. When `tty.enabled` is true and
  * stdin is an actual TTY, attaches a readline interface that accepts the
@@ -109,10 +129,9 @@ export function createTty(state, lifecycle, reload) {
         }
 
         for (const reply of replies) {
-            const appVersion = reply.appVersion ?? "—";
-            commandOutput.write(
-                `  Worker ${reply.pid}: ${appVersion} (node ${reply.nodeVersion ?? process.version})\n`,
-            );
+            const appVersion = sanitizeReplyField(reply.appVersion) ?? "—";
+            const nodeVersion = sanitizeReplyField(reply.nodeVersion) ?? process.version;
+            commandOutput.write(`  Worker ${reply.pid}: ${appVersion} (node ${nodeVersion})\n`);
         }
 
         if (replies.length < workers.length) {
