@@ -189,7 +189,7 @@ function startWorkerIpcResponder(log) {
  * @param {object} [options.tty.stdin=process.stdin] - Readable input stream used for command mode; commands require isTTY=true.
  * @param {object} [options.tty.stdout=process.stdout] - Writable output stream used for command mode.
  * @param {string} [options.tty.prompt] - Optional command prompt text.
- * @param {object} log - The logger instance.
+ * @param {object} [log=console] - The logger instance.
  * @returns {object|*} The cluster manager (in master), or the return value of startWorker (in worker / clustering-disabled mode).
  */
 export function run(startWorker, options = true, log = console) {
