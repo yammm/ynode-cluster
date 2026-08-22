@@ -131,18 +131,21 @@ export function run(startWorker, options = true, log = console) {
 
     const isEnabled = resolveClusteringEnabled(options);
 
-    if (cluster.isWorker || !isEnabled) {
+    if (cluster.isWorker) {
         log.info(`Running worker process.`);
-
-        if (cluster.isWorker) {
-            startWorkerHeartbeat(log);
-        }
+        startWorkerHeartbeat(log);
 
         return startWorker();
     }
 
     const config = buildClusterConfig(options);
     validateClusterConfig(config);
+
+    if (!isEnabled) {
+        log.info("Clustering disabled. Running the application in the current process.");
+
+        return startWorker();
+    }
 
     const ttyConfig = buildTtyConfig(config.tty);
     const state = createState({ config, log, ttyConfig });

@@ -2,7 +2,12 @@ import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 
 import { buildClusterConfig, validateClusterConfig } from "../src/config.js";
-import { expectFixtureFailure, killFixture, spawnFixture } from "./helpers/fixture-process.js";
+import {
+    expectFixtureFailure,
+    killFixture,
+    runFixtureWithOutput,
+    spawnFixture,
+} from "./helpers/fixture-process.js";
 
 describe("Cluster Integration", () => {
     it("should start master and workers", async () => {
@@ -225,6 +230,16 @@ it("should reject null TTY streams with configuration errors", () => {
     );
 });
 
+it("should run the application in-process without worker logs when clustering is disabled", async () => {
+    const { code, output } = await runFixtureWithOutput("disabled-mode-app.js");
+
+    assert.equal(code, 0, `Expected a clean disabled-mode exit.\n${output}`);
+    assert.match(output, /Clustering disabled\. Running the application in the current process\./);
+    assert.match(output, /DISABLED_MODE_WORKER:\d+/);
+    assert.doesNotMatch(output, /Running worker process\./);
+    assert.doesNotMatch(output, /Shogun is the master!/);
+});
+
 it("should reject unknown TTY configuration keys", () => {
     assert.throws(
         () => validateClusterConfig(buildClusterConfig({ tty: { promt: "> " } })),
@@ -325,6 +340,11 @@ const invalidConfigCases = [
         name: "should throw error on unknown configuration keys",
         fixture: "invalid-unknown-key-app.js",
         pattern: /Invalid configuration: unknown option \(maxworkers\)/,
+    },
+    {
+        name: "should validate configuration when clustering is disabled",
+        fixture: "invalid-disabled-config-app.js",
+        pattern: /Invalid configuration: minWorkers \(NaN\) must be a finite number/,
     },
 ];
 
