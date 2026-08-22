@@ -185,6 +185,24 @@ describe("Scaling hardening", () => {
         }
     });
 
+    it("retires the least-loaded worker instead of the most recently forked worker", () => {
+        const { lifecycle, state, workers } = createScalingHarness();
+        state.workerLoads.set(workers[0].id, { lag: 1, lastSeen: Date.now() });
+        state.workerLoads.set(workers[1].id, { lag: 8, lastSeen: Date.now() });
+        state.workerLoads.set(workers[2].id, { lag: 5, lastSeen: Date.now() });
+        let retiredWorker;
+        lifecycle.retireWorker = (worker) => {
+            retiredWorker = worker;
+            return Promise.resolve();
+        };
+        const scaling = createScaling(state, lifecycle);
+
+        scaling.tick();
+
+        assert.strictEqual(retiredWorker, workers[0]);
+        assert.strictEqual(state.desiredWorkers, 2);
+    });
+
     it("does not treat workers without a heartbeat as zero-lag samples", () => {
         const { desiredTargets, lifecycle, state, workers } = createScalingHarness({
             workerCount: 2,

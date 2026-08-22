@@ -31,9 +31,10 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  *      is transiently inflated).
  *   3. Scales up when average event-loop lag, heap, or RSS exceeds its
  *      configured threshold.
- *   4. Scales down by retiring the most-recently-added worker when
- *      average lag falls below `scaleDownThreshold`, gated by
- *      `scaleDownGrace` after the last scale-up.
+ *   4. Scales down by retiring the least-loaded worker with fresh telemetry
+ *      when average lag falls below `scaleDownThreshold`, gated by
+ *      `scaleDownGrace` after the last scale-up. The most-recent worker is
+ *      retained as a deterministic fallback when no fresh sample is available.
  *
  * Per-worker memory limits are enforced when each heartbeat arrives in the
  * lifecycle controller. In `mode: "max"`, desired-capacity reconciliation
@@ -60,6 +61,48 @@ export function createScaling(state, lifecycle) {
         scaleUpRss,
         norestart,
     } = config;
+
+    /**
+     * Selects the active worker contributing the least normalized load. Event-loop
+     * lag always contributes to the score; heap and RSS contribute when their
+     * corresponding scale-up thresholds are enabled. Iterating newest-first keeps
+     * the previous most-recent-worker behavior as a deterministic tie-breaker.
+     * @param {Array<object>} workers - Current cluster workers.
+     * @param {Map<number, object>} freshLoadsByWorkerId - Fresh telemetry by worker id.
+     * @returns {object|undefined} Worker to retire, or undefined when none is active.
+     */
+    function selectScaleDownVictim(workers, freshLoadsByWorkerId) {
+        const activeWorkers = workers.filter(
+            (worker) => state.workerStates.get(worker.id) !== "draining",
+        );
+        let victim;
+        let lowestScore = Number.POSITIVE_INFINITY;
+
+        for (const worker of activeWorkers.toReversed()) {
+            const stats = freshLoadsByWorkerId.get(worker.id);
+            if (!stats) {
+                continue;
+            }
+
+            const lagScore = stats.lag / Math.max(scaleUpThreshold, 1);
+            const heapScore =
+                scaleUpMemory > 0 && typeof stats.memory === "number"
+                    ? stats.memory / 1024 / 1024 / scaleUpMemory
+                    : 0;
+            const rssScore =
+                scaleUpRss > 0 && typeof stats.rss === "number"
+                    ? stats.rss / 1024 / 1024 / scaleUpRss
+                    : 0;
+            const score = lagScore + heapScore + rssScore;
+
+            if (score < lowestScore) {
+                victim = worker;
+                lowestScore = score;
+            }
+        }
+
+        return victim ?? activeWorkers.at(-1);
+    }
 
     function tick() {
         const now = Date.now();
@@ -177,9 +220,7 @@ export function createScaling(state, lifecycle) {
 
             log.info(`Low load detected (Avg Lag: ${avgLag.toFixed(2)}ms). Scaling down...`);
             const workers = lifecycle.getWorkers();
-            const victim = workers.findLast(
-                (worker) => state.workerStates.get(worker.id) !== "draining",
-            );
+            const victim = selectScaleDownVictim(workers, new Map(freshLoads));
             if (victim) {
                 const previousDesiredWorkers = state.desiredWorkers;
                 const scaleDownTarget = lifecycle.setDesiredWorkerCount(previousDesiredWorkers - 1);
