@@ -204,6 +204,107 @@ describe("TTY Command Mode", () => {
         });
     });
 
+    it("should answer ping and version through the built-in worker responder", async () => {
+        await new Promise((resolve, reject) => {
+            const child = spawnFixture("tty-app.js", {
+                stdio: ["pipe", "pipe", "pipe", "ipc"],
+                env: { TEST_STDIN_IS_TTY: "1" },
+            });
+
+            let output = "";
+            let settled = false;
+            let commandsSent = false;
+            let exitRequested = false;
+
+            const finish = (fn) => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                clearTimeout(timeout);
+                try {
+                    child.stdout?.removeAllListeners();
+                    child.stderr?.removeAllListeners();
+                    child.removeAllListeners();
+                } catch (err) {
+                    console.debug(err);
+                }
+                fn();
+            };
+
+            const safeSend = (payload) => {
+                try {
+                    child.send(payload);
+                } catch (err) {
+                    console.debug(err);
+                }
+            };
+
+            const maybeDrive = () => {
+                if (
+                    !commandsSent &&
+                    output.includes("TTY command mode enabled. Type '/rl' to reload workers.")
+                ) {
+                    commandsSent = true;
+                    safeSend({ cmd: "send", line: "/ping" });
+                    safeSend({ cmd: "send", line: "/version" });
+                }
+
+                if (
+                    commandsSent &&
+                    !exitRequested &&
+                    /TTY_OUT: {2}Worker \d+: pong/.test(output) &&
+                    /TTY_OUT: {2}Worker \d+: .+ \(node v/.test(output)
+                ) {
+                    exitRequested = true;
+                    safeSend({ cmd: "exit" });
+                }
+            };
+
+            const timeout = setTimeout(() => {
+                finish(() => {
+                    try {
+                        killFixture(child);
+                    } catch (err) {
+                        console.debug(err);
+                    }
+                    reject(
+                        new Error("Timeout waiting for ping/version replies. Output:\n" + output),
+                    );
+                });
+            }, 15000).unref();
+
+            child.stdout.on("data", (data) => {
+                output += data.toString();
+                maybeDrive();
+            });
+
+            child.stderr.on("data", (data) => {
+                output += data.toString();
+                maybeDrive();
+            });
+
+            child.on("close", (code) => {
+                finish(() => {
+                    try {
+                        assert.equal(code, 0, `Expected clean exit.\nOutput:\n${output}`);
+                        assert.match(output, /TTY_OUT: {2}Worker \d+: pong/);
+                        assert.match(output, /TTY_OUT:Master: node v/);
+                        assert.match(output, /TTY_OUT: {2}Worker \d+: .+ \(node v/);
+                        assert.doesNotMatch(output, /did not respond/);
+                        resolve();
+                    } catch (err) {
+                        reject(err);
+                    }
+                });
+            });
+
+            child.on("error", (err) => {
+                finish(() => reject(err));
+            });
+        });
+    });
+
     it("should skip command mode when stdin is non-TTY", async () => {
         await new Promise((resolve, reject) => {
             const child = spawnFixture("tty-app.js", {

@@ -154,6 +154,8 @@ When `tty.enabled` is set to `true`, the master process listens to `process.stdi
 - `/ping` - Pings all active workers over IPC to ensure responsiveness.
 - `/version` - Gathers and prints the `appVersion` and Node.js version from all workers.
 
+Workers answer `/ping` and `/version` automatically — no application code is required. The version reply reports the worker's `npm_package_version` (falling back to the `version` field of the `package.json` in its working directory, or `—` when neither is available) plus its Node.js runtime version.
+
 ## Accessing Metrics
 
 The `run()` function returns a `ClusterManager` instance (when in cluster mode) which exposes current metrics.

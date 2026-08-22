@@ -35,6 +35,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
 import cluster from "node:cluster";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import {
     buildClusterConfig,
@@ -88,6 +90,73 @@ function startWorkerHeartbeat(log) {
 }
 
 /**
+ * Attaches the built-in worker-side IPC responder that answers the master's
+ * TTY `{cmd: "ping"}` and `{cmd: "version"}` requests. Replies echo the
+ * request `cmd` so the master's collectWorkerReplies() can correlate them;
+ * the master stamps the authoritative `pid`/`id` on each reply itself.
+ * Called inside worker processes only.
+ * @param {object} log - Logger instance.
+ */
+function startWorkerIpcResponder(log) {
+    const worker = cluster.worker;
+    let appVersionPromise = null;
+
+    // Prefer the npm-provided version and fall back to reading the
+    // application's own package.json once, caching the result.
+    const resolveAppVersion = () => {
+        appVersionPromise ??= (async () => {
+            if (process.env.npm_package_version) {
+                return process.env.npm_package_version;
+            }
+
+            try {
+                const raw = await readFile(join(process.cwd(), "package.json"), "utf8");
+                const pkg = JSON.parse(raw);
+                return typeof pkg.version === "string" ? pkg.version : undefined;
+            } catch (err) {
+                log.debug("Failed to resolve application version for version replies", err);
+                return undefined;
+            }
+        })();
+        return appVersionPromise;
+    };
+
+    const sendReply = (payload) => {
+        if (!worker.isConnected()) {
+            return;
+        }
+
+        try {
+            worker.send(payload);
+        } catch (err) {
+            // Ignore, channel probably closed
+            log.debug("Failed to send IPC reply to master", err);
+        }
+    };
+
+    process.on("message", (msg) => {
+        if (!msg || typeof msg !== "object") {
+            return;
+        }
+
+        if (msg.cmd === "ping") {
+            sendReply({ cmd: "ping" });
+            return;
+        }
+
+        if (msg.cmd === "version") {
+            void resolveAppVersion()
+                .then((appVersion) => {
+                    sendReply({ cmd: "version", appVersion, nodeVersion: process.version });
+                })
+                .catch((err) => {
+                    log.debug("Failed to reply to version request", err);
+                });
+        }
+    });
+}
+
+/**
  * Manages the application's clustering.
  * @param {function} startWorker - The function to execute when a worker process starts.
  * @param {object|boolean} options - Configuration object or boolean to enable/disable.
@@ -134,6 +203,7 @@ export function run(startWorker, options = true, log = console) {
     if (cluster.isWorker) {
         log.info(`Running worker process.`);
         startWorkerHeartbeat(log);
+        startWorkerIpcResponder(log);
 
         return startWorker();
     }
