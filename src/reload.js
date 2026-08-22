@@ -53,7 +53,6 @@ export function createReload(state, lifecycle) {
         reloadHealthTimeout,
         reloadDisconnectWait,
     } = config;
-    const reloadHealthTimeoutMs = reloadHealthTimeout ?? reloadListeningTimeout;
 
     function createAbortError(reason = "Cluster reload was aborted") {
         if (reason instanceof Error && reason.name === "AbortError") {
@@ -233,12 +232,7 @@ export function createReload(state, lifecycle) {
         });
     }
 
-    async function waitForWorkerHealth(
-        worker,
-        oldWorker,
-        signal,
-        timeoutMs = reloadHealthTimeoutMs,
-    ) {
+    async function waitForWorkerHealth(worker, oldWorker, signal, timeoutMs = reloadHealthTimeout) {
         if (typeof reloadHealthCheck !== "function") {
             return;
         }
