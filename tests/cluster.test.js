@@ -225,6 +225,13 @@ it("should reject null TTY streams with configuration errors", () => {
     );
 });
 
+it("should reject unknown TTY configuration keys", () => {
+    assert.throws(
+        () => validateClusterConfig(buildClusterConfig({ tty: { promt: "> " } })),
+        /Invalid configuration: unknown option \(tty\.promt\)/,
+    );
+});
+
 it("should reject invalid reload health-check configuration", () => {
     assert.throws(
         () => validateClusterConfig(buildClusterConfig({ reloadHealthTimeout: 0 })),
@@ -313,6 +320,11 @@ const invalidConfigCases = [
         name: "should throw error on invalid mode",
         fixture: "invalid-mode-app.js",
         pattern: /Invalid configuration: mode/,
+    },
+    {
+        name: "should throw error on unknown configuration keys",
+        fixture: "invalid-unknown-key-app.js",
+        pattern: /Invalid configuration: unknown option \(maxworkers\)/,
     },
 ];
 

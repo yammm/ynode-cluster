@@ -51,6 +51,25 @@ const NUMERIC_CONFIG_KEYS = [
     "reloadDisconnectWait",
 ];
 
+const KNOWN_CONFIG_KEYS = new Set([
+    ...NUMERIC_CONFIG_KEYS,
+    "enabled",
+    "mode",
+    "shutdownSignals",
+    "norestart",
+    "reloadHealthCheck",
+    "tty",
+]);
+
+const KNOWN_TTY_CONFIG_KEYS = new Set([
+    "enabled",
+    "commands",
+    "reloadCommand",
+    "stdin",
+    "stdout",
+    "prompt",
+]);
+
 const NON_NEGATIVE_NUMERIC_CONFIG_KEYS = [
     "scalingCooldown",
     "scaleDownGrace",
@@ -164,6 +183,11 @@ function validateTtyConfig(ttyConfig) {
         throw new Error("Invalid configuration: tty must be an object");
     }
 
+    const unknownTtyKey = Object.keys(ttyConfig).find((key) => !KNOWN_TTY_CONFIG_KEYS.has(key));
+    if (unknownTtyKey) {
+        throw new Error(`Invalid configuration: unknown option (tty.${unknownTtyKey})`);
+    }
+
     if (ttyConfig.enabled !== undefined && typeof ttyConfig.enabled !== "boolean") {
         throw new Error(
             `Invalid configuration: tty.enabled (${ttyConfig.enabled}) must be a boolean`,
@@ -226,6 +250,11 @@ export function buildTtyConfig(ttyOptions) {
  * @throws {Error} On any invalid value.
  */
 export function validateClusterConfig(config) {
+    const unknownKey = Object.keys(config).find((key) => !KNOWN_CONFIG_KEYS.has(key));
+    if (unknownKey) {
+        throw new Error(`Invalid configuration: unknown option (${unknownKey})`);
+    }
+
     validateFiniteNumericConfig(config);
     validateNonNegativeNumericConfig(config);
     validateTtyConfig(config.tty);
