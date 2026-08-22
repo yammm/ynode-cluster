@@ -143,7 +143,7 @@ export function createTty(state, lifecycle, reload) {
 
     function cleanup() {
         const readlineInterface = state.ttyReadline;
-        state.ttyReadline = undefined;
+        state.ttyReadline = null;
         if (readlineInterface && interfaceErrorHandler) {
             readlineInterface.off("error", interfaceErrorHandler);
         }

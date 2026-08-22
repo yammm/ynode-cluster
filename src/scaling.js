@@ -211,7 +211,7 @@ export function createScaling(state, lifecycle) {
     function stop() {
         if (state.autoScaleTimer) {
             clearInterval(state.autoScaleTimer);
-            state.autoScaleTimer = undefined;
+            state.autoScaleTimer = null;
         }
     }
 

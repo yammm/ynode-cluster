@@ -51,7 +51,7 @@ describe("TTY Command Mode", () => {
 
         input.emit("error", new Error("input failed"));
 
-        assert.strictEqual(state.ttyReadline, undefined);
+        assert.strictEqual(state.ttyReadline, null);
         assert.strictEqual(errors.length, 1);
         assert.match(errors[0][0], /TTY input stream failed/);
     });
@@ -61,7 +61,7 @@ describe("TTY Command Mode", () => {
 
         output.emit("error", new Error("output failed"));
 
-        assert.strictEqual(state.ttyReadline, undefined);
+        assert.strictEqual(state.ttyReadline, null);
         assert.strictEqual(errors.length, 1);
         assert.match(errors[0][0], /TTY output stream failed/);
     });
@@ -76,7 +76,7 @@ describe("TTY Command Mode", () => {
         input.write("/ping\n");
         await new Promise((resolve) => setImmediate(resolve));
 
-        assert.strictEqual(state.ttyReadline, undefined);
+        assert.strictEqual(state.ttyReadline, null);
         assert.strictEqual(errors.length, 1);
         assert.match(errors[0][0], /TTY command failed/);
     });
@@ -88,7 +88,7 @@ describe("TTY Command Mode", () => {
         input.end();
         await new Promise((resolve) => setImmediate(resolve));
 
-        assert.strictEqual(state.ttyReadline, undefined);
+        assert.strictEqual(state.ttyReadline, null);
         assert.strictEqual(output.listenerCount("error"), 0);
     });
 

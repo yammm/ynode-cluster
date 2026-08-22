@@ -443,7 +443,7 @@ export function createReload(state, lifecycle) {
                 if (state.reloadAbortController === abortController) {
                     state.reloadAbortController = null;
                 }
-                state.reloadPromise = undefined;
+                state.reloadPromise = null;
             });
 
         return state.reloadPromise;
