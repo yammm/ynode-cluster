@@ -644,6 +644,61 @@ describe("Lifecycle hardening", () => {
         );
     });
 
+    it("retries retirement of a stranded old worker after a failed reload", async (t) => {
+        const oldWorker = createFakeWorker(9731, 19731);
+        const replacement = createFakeWorker(9732, 19732);
+        installClusterWorkers(t, [oldWorker]);
+
+        const retirements = [];
+        let failFirstRetirement = true;
+        const state = {
+            config: {
+                reloadOnlineTimeout: 5000,
+                reloadListeningTimeout: 5000,
+                reloadDisconnectWait: 10,
+            },
+            log: { info() {}, warn() {}, error() {}, debug() {} },
+            isShuttingDown: false,
+            listeningWorkers: new Set(),
+            reloadPromise: null,
+            reloadAbortController: null,
+        };
+        const lifecycle = {
+            getActiveWorkers: () => [oldWorker],
+            getActiveWorkerCount: () => 1,
+            forkWorker: () => {
+                cluster.workers[replacement.id] = replacement;
+                setImmediate(() => replacement.emit("online"));
+                return replacement;
+            },
+            attachWorkerErrorHandler() {},
+            retireWorker: async (worker, options) => {
+                retirements.push({ worker, reason: options?.reason });
+                if (worker === oldWorker && failFirstRetirement) {
+                    failFirstRetirement = false;
+                    throw new Error("old worker refused to exit");
+                }
+            },
+            emitLifecycle() {},
+        };
+
+        const reload = createReload(state, lifecycle);
+
+        await assert.rejects(reload.reload(), /old worker refused to exit/);
+        assert.deepStrictEqual(
+            retirements.map((entry) => entry.reason),
+            ["rolling reload"],
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+
+        assert.deepStrictEqual(
+            retirements.map((entry) => entry.reason),
+            ["rolling reload", "stranded reload retirement"],
+        );
+        assert.strictEqual(retirements[1].worker, oldWorker);
+    });
+
     it("does not mutate an Error supplied when cancelling reload", async () => {
         const state = {
             config: {

@@ -25,6 +25,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import cluster from "node:cluster";
 
+const STRANDED_RETIREMENT_RETRY_DELAY_MS = 1000;
+const STRANDED_RETIREMENT_MAX_ATTEMPTS = 5;
+
 /**
  * Creates the reload controller — orchestrates a zero-downtime rolling
  * replacement of the active worker pool. For each snapshotted worker:
@@ -285,6 +288,46 @@ export function createReload(state, lifecycle) {
         }
     }
 
+    // A reload replaces the old worker before retiring it, so a retirement
+    // failure leaves the pool one process above the desired count with no
+    // owner to reconcile it (in mode "max" nothing ever scales down). Retry
+    // the retirement in the background until the stranded worker exits.
+    function retryStrandedRetirement(oldWorker, attempt) {
+        if (state.isShuttingDown || oldWorker.isDead()) {
+            return;
+        }
+
+        void lifecycle
+            .retireWorker(oldWorker, { reason: "stranded reload retirement", graceMs: 0 })
+            .then(() => {
+                log.info(
+                    `Stranded worker ${oldWorker.process.pid} retired after the failed reload.`,
+                );
+            })
+            .catch((err) => {
+                if (attempt >= STRANDED_RETIREMENT_MAX_ATTEMPTS) {
+                    log.error(
+                        `Giving up on retiring stranded worker ${oldWorker.process.pid} after ${attempt} attempts; the pool stays above the desired count until it exits.`,
+                        err,
+                    );
+                    return;
+                }
+
+                log.warn(
+                    `Retirement retry ${attempt} failed for stranded worker ${oldWorker.process.pid}; retrying in ${STRANDED_RETIREMENT_RETRY_DELAY_MS}ms.`,
+                    err,
+                );
+                scheduleStrandedRetirement(oldWorker, attempt + 1);
+            });
+    }
+
+    function scheduleStrandedRetirement(oldWorker, attempt = 1) {
+        setTimeout(
+            () => retryStrandedRetirement(oldWorker, attempt),
+            STRANDED_RETIREMENT_RETRY_DELAY_MS,
+        ).unref();
+    }
+
     async function performReload(signal) {
         log.info("Starting zero-downtime cluster reload...");
         lifecycle.emitLifecycle("reload_start", { workerCount: lifecycle.getActiveWorkerCount() });
@@ -365,10 +408,19 @@ export function createReload(state, lifecycle) {
                 throw err;
             }
 
-            await lifecycle.retireWorker(oldWorker, {
-                reason: "rolling reload",
-                graceMs: reloadDisconnectWait,
-            });
+            try {
+                await lifecycle.retireWorker(oldWorker, {
+                    reason: "rolling reload",
+                    graceMs: reloadDisconnectWait,
+                });
+            } catch (err) {
+                log.error(
+                    `Reload failed: old worker ${oldWorker.process.pid} did not exit; scheduling retirement retries to restore the desired worker count.`,
+                    err,
+                );
+                scheduleStrandedRetirement(oldWorker);
+                throw err;
+            }
             throwIfAborted(signal);
         }
         log.info("Cluster reload complete.");
