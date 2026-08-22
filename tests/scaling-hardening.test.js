@@ -156,6 +156,56 @@ describe("Scaling hardening", () => {
         assert.deepStrictEqual(desiredTargets, [4]);
     });
 
+    it("does not scale down at max capacity while memory pressure remains high", () => {
+        for (const metric of ["memory", "rss"]) {
+            const { desiredTargets, lifecycle, state, workers } = createScalingHarness({
+                workerCount: 2,
+                maxWorkers: 2,
+            });
+            state.config[metric === "memory" ? "scaleUpMemory" : "scaleUpRss"] = 10;
+            for (const worker of workers) {
+                state.workerLoads.set(worker.id, {
+                    lag: 0,
+                    lastSeen: Date.now(),
+                    [metric]: 20 * 1024 * 1024,
+                });
+            }
+            let retirements = 0;
+            lifecycle.retireWorker = () => {
+                ++retirements;
+                return Promise.resolve();
+            };
+            const scaling = createScaling(state, lifecycle);
+
+            scaling.tick();
+
+            assert.strictEqual(retirements, 0, `${metric} pressure must preserve capacity`);
+            assert.strictEqual(state.desiredWorkers, 2);
+            assert.deepStrictEqual(desiredTargets, []);
+        }
+    });
+
+    it("does not treat workers without a heartbeat as zero-lag samples", () => {
+        const { desiredTargets, lifecycle, state, workers } = createScalingHarness({
+            workerCount: 2,
+        });
+        for (const worker of workers) {
+            state.workerLoads.delete(worker.id);
+        }
+        let retirements = 0;
+        lifecycle.retireWorker = () => {
+            ++retirements;
+            return Promise.resolve();
+        };
+        const scaling = createScaling(state, lifecycle);
+
+        scaling.tick();
+
+        assert.strictEqual(retirements, 0);
+        assert.strictEqual(state.desiredWorkers, 2);
+        assert.deepStrictEqual(desiredTargets, []);
+    });
+
     it("does not infer load or health actions from stale telemetry", () => {
         const { ensureCalls, lifecycle, state, workers } = createScalingHarness({
             workerCount: 1,

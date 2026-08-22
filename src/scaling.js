@@ -132,10 +132,9 @@ export function createScaling(state, lifecycle) {
         const shouldScaleUpHeap = scaleUpMemory > 0 && avgMemoryMB > scaleUpMemory;
         const shouldScaleUpRss = scaleUpRss > 0 && avgRssMB > scaleUpRss;
 
-        if (
-            (shouldScaleUpLag || shouldScaleUpHeap || shouldScaleUpRss) &&
-            state.desiredWorkers < maxWorkers
-        ) {
+        const hasUpwardPressure = shouldScaleUpLag || shouldScaleUpHeap || shouldScaleUpRss;
+
+        if (hasUpwardPressure && state.desiredWorkers < maxWorkers) {
             const reason = shouldScaleUpRss
                 ? `High RSS (Avg: ${avgRssMB.toFixed(2)}MB)`
                 : shouldScaleUpHeap
@@ -154,6 +153,14 @@ export function createScaling(state, lifecycle) {
             state.lastScaleUpTime = Date.now();
             state.lastScalingAction = now;
 
+            return;
+        }
+
+        // Reaching max capacity does not turn a scale-up signal into evidence
+        // that the pool is safe to shrink. Preserve capacity until all upward
+        // pressure has cleared.
+        if (hasUpwardPressure) {
+            log.debug("Skipping scale down while the pool is under upward pressure.");
             return;
         }
 

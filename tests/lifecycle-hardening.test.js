@@ -182,16 +182,15 @@ describe("Lifecycle hardening", () => {
         t.after(lifecycle.removeClusterEvents);
         cluster.emit("online", worker);
 
+        assert.strictEqual(state.workerLoads.has(worker.id), false);
+
         worker.emit("message", {
             cmd: "heartbeat",
             lag: -10000,
             memory: { heapUsed: -2 * 1024 * 1024, rss: -1 },
         });
 
-        const load = state.workerLoads.get(worker.id);
-        assert.strictEqual(load.lag, 0);
-        assert.strictEqual(load.memory, undefined);
-        assert.strictEqual(load.rss, undefined);
+        assert.strictEqual(state.workerLoads.has(worker.id), false);
         assert.strictEqual(state.workerStates.get(worker.id), "online");
         assert.strictEqual(state.workerRetirementPromises.size, 0);
 
@@ -206,6 +205,17 @@ describe("Lifecycle hardening", () => {
         assert.strictEqual(partialLoad.memory, 1024);
         assert.strictEqual(partialLoad.rss, undefined);
         assert.strictEqual(partialLoad.external, 10);
+
+        const acceptedLastSeen = partialLoad.lastSeen;
+        worker.emit("message", {
+            cmd: "heartbeat",
+            lag: Number.NaN,
+            memory: { heapUsed: 2048 },
+        });
+
+        assert.strictEqual(state.workerLoads.get(worker.id).lastSeen, acceptedLastSeen);
+        assert.strictEqual(state.workerLoads.get(worker.id).lag, 5);
+        assert.strictEqual(state.workerLoads.get(worker.id).memory, 1024);
     });
 
     it("retires only one memory-limit offender at a time", async (t) => {

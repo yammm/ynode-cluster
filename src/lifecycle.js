@@ -364,15 +364,21 @@ export function createLifecycle(state) {
         });
 
         state.workerStartTimes.set(worker.id, Date.now());
-        state.workerLoads.set(worker.id, { lag: 0, lastSeen: Date.now() });
 
         const messageHandler = (msg) => {
             if (!msg || typeof msg !== "object" || msg.cmd !== "heartbeat") {
                 return;
             }
 
-            const lag = nonNegativeFinite(msg.lag) ?? 0;
+            const lag = nonNegativeFinite(msg.lag);
             const memory = normalizeHeartbeatMemory(msg.memory);
+
+            // Invalid heartbeats carry no trustworthy freshness signal. Keep
+            // the previous sample intact instead of refreshing it with values
+            // that could suppress a scaling or health decision.
+            if (lag === undefined || (msg.memory !== undefined && !memory)) {
+                return;
+            }
 
             state.workerLoads.set(worker.id, {
                 lag,
