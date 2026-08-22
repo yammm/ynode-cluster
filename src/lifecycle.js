@@ -31,20 +31,33 @@ const RESTART_BACKOFF_RESET_UPTIME_MS = 30000;
 const RETIRE_TERM_WAIT_MS = 1000;
 const RETIRE_KILL_WAIT_MS = 1000;
 
+// Heartbeats cross the worker/master trust boundary, so telemetry is
+// validated here even though well-behaved workers already clamp it. A
+// negative value would otherwise drag pool-wide averages down and suppress
+// scale-up decisions.
+function nonNegativeFinite(value) {
+    return Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
 function normalizeHeartbeatMemory(memory) {
-    if (Number.isFinite(memory)) {
-        return { heapUsed: memory };
+    if (typeof memory === "number") {
+        const heapUsed = nonNegativeFinite(memory);
+        return heapUsed === undefined ? undefined : { heapUsed };
     }
 
     // Current workers send the full process.memoryUsage() object. Accept it
     // while retaining the numeric heap-only format handled above for workers
     // running an older release during a rolling upgrade.
-    if (memory !== null && typeof memory === "object" && Number.isFinite(memory.heapUsed)) {
+    if (memory !== null && typeof memory === "object") {
+        const heapUsed = nonNegativeFinite(memory.heapUsed);
+        if (heapUsed === undefined) {
+            return undefined;
+        }
         return {
-            heapUsed: memory.heapUsed,
-            rss: Number.isFinite(memory.rss) ? memory.rss : undefined,
-            external: Number.isFinite(memory.external) ? memory.external : undefined,
-            arrayBuffers: Number.isFinite(memory.arrayBuffers) ? memory.arrayBuffers : undefined,
+            heapUsed,
+            rss: nonNegativeFinite(memory.rss),
+            external: nonNegativeFinite(memory.external),
+            arrayBuffers: nonNegativeFinite(memory.arrayBuffers),
         };
     }
 
@@ -358,7 +371,7 @@ export function createLifecycle(state) {
                 return;
             }
 
-            const lag = Number.isFinite(msg.lag) ? msg.lag : 0;
+            const lag = nonNegativeFinite(msg.lag) ?? 0;
             const memory = normalizeHeartbeatMemory(msg.memory);
 
             state.workerLoads.set(worker.id, {

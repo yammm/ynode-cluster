@@ -173,6 +173,41 @@ describe("Lifecycle hardening", () => {
         assert.strictEqual(replies[0].id, worker.id);
     });
 
+    it("rejects negative heartbeat telemetry at the master boundary", (t) => {
+        const worker = createFakeWorker(9311, 19311);
+        installClusterWorkers(t, [worker]);
+        const state = createLifecycleState({ maxWorkerMemory: 1 });
+        const lifecycle = createLifecycle(state);
+        lifecycle.attachClusterEvents();
+        t.after(lifecycle.removeClusterEvents);
+        cluster.emit("online", worker);
+
+        worker.emit("message", {
+            cmd: "heartbeat",
+            lag: -10000,
+            memory: { heapUsed: -2 * 1024 * 1024, rss: -1 },
+        });
+
+        const load = state.workerLoads.get(worker.id);
+        assert.strictEqual(load.lag, 0);
+        assert.strictEqual(load.memory, undefined);
+        assert.strictEqual(load.rss, undefined);
+        assert.strictEqual(state.workerStates.get(worker.id), "online");
+        assert.strictEqual(state.workerRetirementPromises.size, 0);
+
+        worker.emit("message", {
+            cmd: "heartbeat",
+            lag: 5,
+            memory: { heapUsed: 1024, rss: -1, external: 10 },
+        });
+
+        const partialLoad = state.workerLoads.get(worker.id);
+        assert.strictEqual(partialLoad.lag, 5);
+        assert.strictEqual(partialLoad.memory, 1024);
+        assert.strictEqual(partialLoad.rss, undefined);
+        assert.strictEqual(partialLoad.external, 10);
+    });
+
     it("retires only one memory-limit offender at a time", async (t) => {
         const first = createFakeWorker(9351, 19351);
         const second = createFakeWorker(9352, 19352);
