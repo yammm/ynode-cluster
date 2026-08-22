@@ -71,6 +71,10 @@ if (cluster.isPrimary) {
 }
 ```
 
+### Graceful Worker Shutdown
+
+Whenever the primary retires a worker — during scale-down, rolling reload, a memory-limit restart, or cluster shutdown — it first sends the worker the IPC string message `"shutdown"`. Workers should handle that message by closing their servers cleanly and exiting, exactly as the `process.on("message", ...)` handler in the example above does. A worker that ignores the message is escalated to `SIGTERM` and finally `SIGKILL` once the configured `shutdownTimeout` budget is spent.
+
 ### Zero-Downtime Reload
 
 You can reload the cluster (e.g. after a code deployment) without dropping connections using `control.reload()`. This will:
