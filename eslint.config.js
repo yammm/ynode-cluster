@@ -33,22 +33,22 @@ import eslintConfigPrettier from "eslint-config-prettier";
 import simpleImportSort from "eslint-plugin-simple-import-sort";
 import globals from "globals";
 
-const ignores = [
-    "CHANGELOG.md",
-    "**/node_modules/**",
-    "**/*.min.js",
-    "**/package-lock.json",
-    "**/docs/**",
-];
-
 export default defineConfig([
+    // Global ignores: an object with only `ignores` applies to every config block.
     {
-        ignores,
+        ignores: [
+            "CHANGELOG.md",
+            "**/node_modules/**",
+            "**/*.min.js",
+            "**/package-lock.json",
+            "**/docs/**",
+        ],
+    },
+    {
         linterOptions: { reportUnusedDisableDirectives: true },
     },
     {
         files: ["**/*.{js,mjs,cjs}"],
-        ignores,
         plugins: { js, "simple-import-sort": simpleImportSort },
         extends: ["js/recommended"],
         languageOptions: {
@@ -60,7 +60,6 @@ export default defineConfig([
             eqeqeq: ["error", "always"],
             "no-unused-vars": ["error", { args: "none", ignoreRestSiblings: true }],
             "no-implicit-coercion": ["warn", { allow: ["!!"] }],
-            curly: ["error", "all"],
             "simple-import-sort/imports": [
                 "error",
                 {
@@ -78,14 +77,12 @@ export default defineConfig([
     },
     {
         files: ["**/*.json"],
-        ignores,
         plugins: { json },
         language: "json/json",
         extends: ["json/recommended"],
     },
     {
         files: ["**/*.md"],
-        ignores: ["CHANGELOG.md", "**/node_modules/**", "**/docs/**"],
         plugins: { markdown },
         language: "markdown/gfm",
         extends: ["markdown/recommended"],
@@ -93,9 +90,9 @@ export default defineConfig([
     // Put this LAST to disable rules that conflict with Prettier formatting
     eslintConfigPrettier,
     {
-        // eslint-config-prettier turns off `curly`, but we want to strictly enforce it
+        // eslint-config-prettier turns off `curly`, but brace presence is code
+        // structure Prettier does not manage, so we strictly enforce it.
         files: ["**/*.{js,mjs,cjs}"],
-        ignores,
         rules: {
             curly: ["error", "all"],
         },
