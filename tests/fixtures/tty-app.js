@@ -41,7 +41,9 @@ const manager = run(
     },
 );
 
-if (!cluster.isWorker && manager) {
+if (cluster.isWorker) {
+    console.log("EVENT:worker_ready");
+} else if (manager) {
     manager.on("reload_start", () => {
         console.log("EVENT:reload_start");
     });

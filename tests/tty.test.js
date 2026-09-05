@@ -152,7 +152,8 @@ describe("TTY Command Mode", () => {
             const maybeDrive = () => {
                 if (
                     !commandsSent &&
-                    output.includes("TTY command mode enabled. Type '/rl' to reload workers.")
+                    output.includes("TTY command mode enabled. Type '/rl' to reload workers.") &&
+                    output.includes("EVENT:worker_ready")
                 ) {
                     commandsSent = true;
                     safeSend({ cmd: "send", line: "help" });
@@ -264,7 +265,8 @@ describe("TTY Command Mode", () => {
             const maybeDrive = () => {
                 if (
                     !commandsSent &&
-                    output.includes("TTY command mode enabled. Type '/rl' to reload workers.")
+                    output.includes("TTY command mode enabled. Type '/rl' to reload workers.") &&
+                    output.includes("EVENT:worker_ready")
                 ) {
                     commandsSent = true;
                     safeSend({ cmd: "send", line: "/ping" });
